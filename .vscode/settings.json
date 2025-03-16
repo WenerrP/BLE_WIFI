@@ -8,7 +8,10 @@
     "idf.portWin": "COM5",
     "idf.toolsPathWin": "c:\\Espressif\\tools",
     "files.associations": {
-        "qrcode.h": "c"
+        "qrcode.h": "c",
+        "event_manager.h": "c",
+        "mqtt_manager.h": "c",
+        "state_machine.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"
