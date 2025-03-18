@@ -14,6 +14,7 @@ static const char *TAG = "MQTT_APP";
 static esp_mqtt_client_handle_t client = NULL;
 static esp_timer_handle_t reconnect_timer = NULL;
 static int mqtt_retry_count = 0;
+static bool mqtt_connected = false;
 
 // Constantes para la gestión de MQTT
 #define MQTT_RECONNECT_TIMEOUT_MS 5000
@@ -77,18 +78,20 @@ static void mqtt_reconnect_timer_callback(void* arg) {
     }
 }
 
-// Manejador de eventos MQTT
+// Manejador de eventos MQTT simplificado
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = event_data;
     
+    // Implementación alternativa que evita usar formatos problemáticos
     switch (event->event_id) {
         case MQTT_EVENT_BEFORE_CONNECT:
-            ESP_LOGI(TAG, "MQTT iniciando conexión, intento %d", mqtt_retry_count + 1);
+            ESP_LOGI(TAG, "MQTT iniciando conexión");
             break;
             
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT conectado al broker");
             mqtt_retry_count = 0;
+            mqtt_connected = true;  // Set flag to true
             
             // Suscribirnos a los tópicos relevantes
             esp_mqtt_client_subscribe(client, "/test/topic", 0);
@@ -99,48 +102,52 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             
         case MQTT_EVENT_DISCONNECTED:
             ESP_LOGW(TAG, "MQTT desconectado");
+            mqtt_connected = false;  // Set flag to false
             
+            // Manejar reconexión sin usar sprintf para el delay
             if (mqtt_retry_count < MQTT_MAX_RETRY_COUNT) {
                 uint32_t delay = exponential_backoff(mqtt_retry_count);
-                ESP_LOGI(TAG, "Programando reconexión en %u ms", delay);
+                // Evitamos imprimir el valor de delay
+                ESP_LOGI(TAG, "Programando reconexión");
                 esp_timer_start_once(reconnect_timer, delay * 1000);
                 mqtt_retry_count++;
             } else {
-                ESP_LOGE(TAG, "Número máximo de intentos alcanzado. No se intentará reconexión automática.");
+                ESP_LOGE(TAG, "Número máximo de intentos alcanzado");
             }
             break;
             
         case MQTT_EVENT_SUBSCRIBED:
-            ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
+            ESP_LOGI(TAG, "MQTT subscripción exitosa");
             break;
             
         case MQTT_EVENT_UNSUBSCRIBED:
-            ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
+            ESP_LOGI(TAG, "MQTT cancelación de subscripción exitosa");
             break;
             
         case MQTT_EVENT_PUBLISHED:
-            ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+            ESP_LOGI(TAG, "MQTT mensaje publicado exitosamente");
             break;
             
         case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+            ESP_LOGI(TAG, "MQTT datos recibidos");
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
             break;
             
         case MQTT_EVENT_ERROR:
-            ESP_LOGE(TAG, "MQTT_EVENT_ERROR");
+            ESP_LOGE(TAG, "MQTT error");
             handle_mqtt_error(event);
             break;
             
         default:
-            ESP_LOGI(TAG, "Otro evento MQTT id:%d", event->event_id);
+            ESP_LOGI(TAG, "Otro evento MQTT");
             break;
     }
 }
 
+// Update is_connected function
 bool mqtt_app_is_connected(void) {
-    return (client != NULL && esp_mqtt_client_is_connected(client));
+    return (client != NULL && mqtt_connected);
 }
 
 void mqtt_app_start(void) {
@@ -221,8 +228,9 @@ void mqtt_app_start(void) {
     free(client_id); // Liberamos la memoria del client_id una vez usado
 }
 
+// Update publish function
 esp_err_t mqtt_app_publish(const char *topic, const char *data, int len, int qos, bool retain) {
-    if (client == NULL || !esp_mqtt_client_is_connected(client)) {
+    if (client == NULL || !mqtt_connected) {
         ESP_LOGE(TAG, "Cliente MQTT no inicializado o no conectado");
         return ESP_FAIL;
     }
@@ -233,12 +241,13 @@ esp_err_t mqtt_app_publish(const char *topic, const char *data, int len, int qos
         return ESP_FAIL;
     }
     
-    ESP_LOGI(TAG, "Mensaje publicado con éxito en el tópico %s, msg_id=%d", topic, msg_id);
+    ESP_LOGI(TAG, "Mensaje publicado con éxito en el tópico %s, msg_id=%lu", topic, (unsigned long)msg_id);
     return ESP_OK;
 }
 
+// Update subscribe function
 esp_err_t mqtt_app_subscribe(const char *topic, int qos) {
-    if (client == NULL || !esp_mqtt_client_is_connected(client)) {
+    if (client == NULL || !mqtt_connected) {
         ESP_LOGE(TAG, "Cliente MQTT no inicializado o no conectado");
         return ESP_FAIL;
     }
@@ -249,12 +258,13 @@ esp_err_t mqtt_app_subscribe(const char *topic, int qos) {
         return ESP_FAIL;
     }
     
-    ESP_LOGI(TAG, "Suscrito con éxito al tópico %s, msg_id=%d", topic, msg_id);
+    ESP_LOGI(TAG, "Suscrito con éxito al tópico %s, msg_id=%lu", topic, (unsigned long)msg_id);
     return ESP_OK;
 }
 
+// Update unsubscribe function
 esp_err_t mqtt_app_unsubscribe(const char *topic) {
-    if (client == NULL || !esp_mqtt_client_is_connected(client)) {
+    if (client == NULL || !mqtt_connected) {
         ESP_LOGE(TAG, "Cliente MQTT no inicializado o no conectado");
         return ESP_FAIL;
     }
@@ -265,10 +275,11 @@ esp_err_t mqtt_app_unsubscribe(const char *topic) {
         return ESP_FAIL;
     }
     
-    ESP_LOGI(TAG, "Cancelada suscripción al tópico %s, msg_id=%d", topic, msg_id);
+    ESP_LOGI(TAG, "Cancelada suscripción al tópico %s, msg_id=%lu", topic, (unsigned long)msg_id);
     return ESP_OK;
 }
 
+// Update stop function
 void mqtt_app_stop(void) {
     if (client == NULL) {
         ESP_LOGW(TAG, "Cliente MQTT ya está detenido");
@@ -285,7 +296,7 @@ void mqtt_app_stop(void) {
     }
     
     // Publicar mensaje de desconexión si estamos conectados
-    if (esp_mqtt_client_is_connected(client)) {
+    if (mqtt_connected) {
         esp_mqtt_client_publish(client, "/test/topic", "ESP32 desconectado", 0, 1, 0);
         esp_mqtt_client_disconnect(client);
     }
