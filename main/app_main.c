@@ -17,7 +17,10 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <esp_event.h>
+#include <esp_system.h>
+#include <esp_mac.h>
 #include <nvs_flash.h>
+#include <driver/gpio.h>
 
 #include <wifi_provisioning/manager.h>
 #include "mqtt_app.h"
@@ -29,6 +32,13 @@
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
 #endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+
+#define LED_GPIO_PIN_A 2
+#define LED_GPIO_PIN_B 13
+#define LED_GPIO_PIN_C 14
+
+// Variable para rastrear el estado de los LEDs
+static int current_active_led = 0; // 0=ninguno, 1=A, 2=B, 3=C
 
 void mqtt_app_start(void);
 
@@ -260,8 +270,76 @@ esp_err_t custom_prov_data_handler(uint32_t session_id, const uint8_t *inbuf, ss
     return ESP_OK;
 }
 
+static void configure_leds(void)
+{
+    ESP_LOGI(TAG, "Configurando pines GPIO para LEDs");
+    
+    // Configurar pin para LED A
+    gpio_reset_pin(LED_GPIO_PIN_A);
+    gpio_set_direction(LED_GPIO_PIN_A, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(LED_GPIO_PIN_A, GPIO_PULLDOWN_ONLY);  // Añadir resistencia pull-down
+
+    // Configurar pin para LED B
+    gpio_reset_pin(LED_GPIO_PIN_B);
+    gpio_set_direction(LED_GPIO_PIN_B, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(LED_GPIO_PIN_B, GPIO_PULLDOWN_ONLY);  // Añadir resistencia pull-down
+
+    // Configurar pin para LED C
+    gpio_reset_pin(LED_GPIO_PIN_C);
+    gpio_set_direction(LED_GPIO_PIN_C, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(LED_GPIO_PIN_C, GPIO_PULLDOWN_ONLY);  // Añadir resistencia pull-down
+
+    // Inicialmente todos los LEDs apagados
+    gpio_set_level(LED_GPIO_PIN_A, 0);
+    gpio_set_level(LED_GPIO_PIN_B, 0);
+    gpio_set_level(LED_GPIO_PIN_C, 0);
+}
+
+void process_led_command(char command)
+{
+    ESP_LOGI(TAG, "Procesando comando LED: %c", command);
+    
+    switch (command) {
+        case 'A':
+            // Encender LED A, apagar los demás
+            gpio_set_level(LED_GPIO_PIN_A, 1);
+            gpio_set_level(LED_GPIO_PIN_B, 0);
+            gpio_set_level(LED_GPIO_PIN_C, 0);
+            current_active_led = 1;
+            ESP_LOGI(TAG, "LED A encendido");
+            break;
+            
+        case 'B':
+            // Encender LED B, apagar los demás
+            gpio_set_level(LED_GPIO_PIN_A, 0);
+            gpio_set_level(LED_GPIO_PIN_B, 1);
+            gpio_set_level(LED_GPIO_PIN_C, 0);
+            current_active_led = 2;
+            ESP_LOGI(TAG, "LED B encendido");
+            break;
+            
+        case 'C':
+            // Encender LED C, apagar los demás
+            gpio_set_level(LED_GPIO_PIN_A, 0);
+            gpio_set_level(LED_GPIO_PIN_B, 0);
+            gpio_set_level(LED_GPIO_PIN_C, 1);
+            current_active_led = 3;
+            ESP_LOGI(TAG, "LED C encendido");
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Comando desconocido: %c", command);
+            break;
+    }
+}
+
 void app_main(void)
 {
+    // Código existente...
+    
+    // Configurar los LEDs antes de iniciar MQTT
+    configure_leds();
+    
     /* Initialize NVS partition */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -504,7 +582,10 @@ void app_main(void)
         xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
     }
 #else
-         ESP_LOGI(TAG, "Hello World!");
+    // Reemplaza el simple "Hello World" con un bucle que mantenga la aplicación viva
+    while (1) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        // No necesitamos hacer nada aquí, el callback de MQTT maneja todo
+    }
 #endif
-
 }

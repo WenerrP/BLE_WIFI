@@ -49,4 +49,7 @@ esp_err_t mqtt_app_unsubscribe(const char *topic);
  */
 void mqtt_app_stop(void);
 
+// Callback para procesar comandos LED
+void process_led_command(char command);
+
 #endif /* MQTT_APP_H */

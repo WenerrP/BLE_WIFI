@@ -28,6 +28,9 @@ static uint32_t exponential_backoff(uint8_t retry_count);
 static void handle_mqtt_error(esp_mqtt_event_handle_t event);
 static void log_error_if_nonzero(const char *message, int error_code);
 
+// Declaración externa para la función de procesamiento de comandos LED
+extern void process_led_command(char command);
+
 // Función para crear un ID de cliente único
 static char* generate_client_id(void) {
     uint8_t mac[6];
@@ -94,7 +97,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             mqtt_connected = true;  // Set flag to true
             
             // Suscribirnos a los tópicos relevantes
-            esp_mqtt_client_subscribe(client, "/test/topic", 0);
+            esp_mqtt_client_subscribe(client, "/led/command", 0);
             
             // Publicar mensaje de conexión
             esp_mqtt_client_publish(client, "/test/topic", "ESP32 conectado!", 0, 1, 0);
@@ -132,6 +135,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             ESP_LOGI(TAG, "MQTT datos recibidos");
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
+            
+            // Procesar comandos para los LEDs si el mensaje es un solo carácter
+            if (event->data_len == 1) {
+                process_led_command(event->data[0]);
+            }
             break;
             
         case MQTT_EVENT_ERROR:
