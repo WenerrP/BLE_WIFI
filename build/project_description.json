@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "BLE_WIFI",
-    "project_version":    "1",
+    "project_version":    "27788f0-dirty",
     "project_path":       "C:/Users/wener/BLE_WIFI",
     "idf_path":           "C:/Users/wener/esp/v5.3.2/esp-idf",
     "build_dir":          "C:/Users/wener/BLE_WIFI/build",
@@ -1190,12 +1190,12 @@
             "dir": "C:/Users/wener/BLE_WIFI/main",
             "type": "LIBRARY",
             "lib": "__idf_main",
-            "reqs": [],
+            "reqs": [ "esp_wifi", "wifi_provisioning", "nvs_flash", "mqtt" ],
             "priv_reqs": [ "espressif__qrcode" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__qrcode" ],
             "file": "C:/Users/wener/BLE_WIFI/build/esp-idf/main/libmain.a",
-            "sources": [ "C:/Users/wener/BLE_WIFI/main/app_main.c" ],
+            "sources": [ "C:/Users/wener/BLE_WIFI/main/app_main.c", "C:/Users/wener/BLE_WIFI/main/mqtt_app.c" ],
             "include_dirs": [ "." ]
         },
         "mbedtls": {
@@ -1225,7 +1225,7 @@
             "managed_reqs": [],
             "managed_priv_reqs": [],
             "file": "C:/Users/wener/BLE_WIFI/build/esp-idf/mqtt/libmqtt.a",
-            "sources": [ "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/mqtt_client.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/mqtt_msg.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/mqtt_outbox.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/platform_esp32_idf.c" ],
+            "sources": [ "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/mqtt_client.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/mqtt_msg.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/mqtt_outbox.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/platform_esp32_idf.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/lib/mqtt5_msg.c", "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/mqtt5_client.c" ],
             "include_dirs": [ "C:/Users/wener/esp/v5.3.2/esp-idf/components/mqtt/esp-mqtt/include" ]
         },
         "newlib": {
@@ -2802,7 +2802,7 @@
             "prefix": "idf",
             "dir": "C:/Users/wener/BLE_WIFI/main",
             "lib": "__idf_main",
-            "reqs": [],
+            "reqs": [ "esp_wifi", "wifi_provisioning", "nvs_flash", "mqtt" ],
             "priv_reqs": [ "espressif__qrcode" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__qrcode" ],

@@ -20,6 +20,7 @@
 #include <nvs_flash.h>
 
 #include <wifi_provisioning/manager.h>
+#include "mqtt_app.h"
 
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
 #include <wifi_provisioning/scheme_ble.h>
@@ -29,6 +30,7 @@
 #include <wifi_provisioning/scheme_softap.h>
 #endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
 
+void mqtt_app_start(void);
 
 static const char *TAG = "app";
 
@@ -106,6 +108,8 @@ static EventGroupHandle_t wifi_event_group;
 #define PROV_TRANSPORT_SOFTAP   "softap"
 #define PROV_TRANSPORT_BLE      "ble"
 
+static bool mqtt_initialized = false;
+
 /* Event handler for catching system events */
 static void event_handler(void* arg, esp_event_base_t event_base,
                           int32_t event_id, void* event_data)
@@ -178,6 +182,13 @@ static void event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Connected with IP Address:" IPSTR, IP2STR(&event->ip_info.ip));
+        
+        /* Iniciar MQTT una vez que tenemos conexión WiFi */
+        if (!mqtt_initialized) {
+            mqtt_app_start();
+            mqtt_initialized = true;
+        }
+        
         /* Signal main application to continue execution */
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_EVENT);
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE

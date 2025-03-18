@@ -1,0 +1,9 @@
+[0/1] Re-running CMake...
+-- ccache will be used for faster recompilation
+-- Building ESP-IDF components for target esp32
+NOTICE: Processing 2 dependencies:
+NOTICE: [1/2] espressif/qrcode (0.1.0~2)
+NOTICE: [2/2] idf (5.3.2)
+-- Configuring incomplete, errors occurred!
+FAILED: build.ninja 
+C:\Espressif\tools\tools\cmake\3.30.2\bin\cmake.exe --regenerate-during-build -SC:\Users\wener\BLE_WIFI -BC:\Users\wener\BLE_WIFI\build

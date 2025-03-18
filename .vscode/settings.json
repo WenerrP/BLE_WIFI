@@ -11,7 +11,11 @@
         "qrcode.h": "c",
         "event_manager.h": "c",
         "mqtt_manager.h": "c",
-        "state_machine.h": "c"
+        "state_machine.h": "c",
+        "esp_log.h": "c",
+        "mqtt_client.h": "c",
+        "esp_event.h": "c",
+        "esp_wifi.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"
