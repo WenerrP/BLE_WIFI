@@ -52,4 +52,11 @@ void mqtt_app_stop(void);
 // Callback para procesar comandos LED
 void process_led_command(char command);
 
+/**
+ * @brief Establece la dirección IP del dispositivo para informes de estado
+ * 
+ * @param ip Cadena con la dirección IP
+ */
+void mqtt_app_set_ip(const char* ip);
+
 #endif /* MQTT_APP_H */

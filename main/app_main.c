@@ -21,6 +21,7 @@
 #include <esp_mac.h>
 #include <nvs_flash.h>
 #include <driver/gpio.h>
+#include <esp_timer.h>
 
 #include <wifi_provisioning/manager.h>
 #include "mqtt_app.h"
@@ -39,6 +40,7 @@
 
 // Variable para rastrear el estado de los LEDs
 static int current_active_led = 0; // 0=ninguno, 1=A, 2=B, 3=C
+static char device_ip[16]; // Para almacenar la dirección IP como string
 
 void mqtt_app_start(void);
 
@@ -193,15 +195,20 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Connected with IP Address:" IPSTR, IP2STR(&event->ip_info.ip));
         
+        // Convertir la IP a string
+        char ip_str[16];
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
+        
+        // Actualizar la IP en el módulo MQTT
+        mqtt_app_set_ip(ip_str);
+        
         /* Iniciar MQTT una vez que tenemos conexión WiFi */
-        if (!mqtt_initialized) {
-            mqtt_app_start();
-            mqtt_initialized = true;
-        }
+        mqtt_app_start();
         
         /* Signal main application to continue execution */
         xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_EVENT);
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
+
+        #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
     } else if (event_base == PROTOCOMM_TRANSPORT_BLE_EVENT) {
         switch (event_id) {
             case PROTOCOMM_TRANSPORT_BLE_CONNECTED:
@@ -213,7 +220,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             default:
                 break;
         }
-#endif
+        #endif
     } else if (event_base == PROTOCOMM_SECURITY_SESSION_EVENT) {
         switch (event_id) {
             case PROTOCOMM_SECURITY_SESSION_SETUP_OK:
@@ -331,6 +338,19 @@ void process_led_command(char command)
             ESP_LOGW(TAG, "Comando desconocido: %c", command);
             break;
     }
+}
+
+static void publish_device_status(const char* status) {
+    if (!mqtt_app_is_connected()) {
+        return;
+    }
+    
+    char json_message[100];
+    snprintf(json_message, sizeof(json_message), "{\"status\":\"%s\",\"ip\":\"%s\"}", 
+             status, device_ip);
+    
+    mqtt_app_publish("/device/status", json_message, strlen(json_message), 1, true);
+    ESP_LOGI(TAG, "Estado del dispositivo publicado: %s", json_message);
 }
 
 void app_main(void)
@@ -582,10 +602,22 @@ void app_main(void)
         xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
     }
 #else
-    // Reemplaza el simple "Hello World" con un bucle que mantenga la aplicación viva
+    // Bucle principal con publicación periódica de estado
+    const int HEARTBEAT_INTERVAL_MS = 60000; // 1 minuto
+    int last_heartbeat = 0;
+    
     while (1) {
+        int current_time = esp_timer_get_time() / 1000;
+        
+        // Publicar estado cada minuto
+        if (current_time - last_heartbeat >= HEARTBEAT_INTERVAL_MS) {
+            if (mqtt_app_is_connected()) {
+                publish_device_status("online");
+                last_heartbeat = current_time;
+            }
+        }
+        
         vTaskDelay(1000 / portTICK_PERIOD_MS);
-        // No necesitamos hacer nada aquí, el callback de MQTT maneja todo
     }
 #endif
 }

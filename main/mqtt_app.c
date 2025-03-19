@@ -15,6 +15,7 @@ static esp_mqtt_client_handle_t client = NULL;
 static esp_timer_handle_t reconnect_timer = NULL;
 static int mqtt_retry_count = 0;
 static bool mqtt_connected = false;
+static char device_ip[16] = "0.0.0.0"; // Default IP
 
 // Constantes para la gestión de MQTT
 #define MQTT_RECONNECT_TIMEOUT_MS 5000
@@ -94,13 +95,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "MQTT conectado al broker");
             mqtt_retry_count = 0;
-            mqtt_connected = true;  // Set flag to true
+            mqtt_connected = true;
             
             // Suscribirnos a los tópicos relevantes
             esp_mqtt_client_subscribe(client, "/led/command", 0);
             
-            // Publicar mensaje de conexión
-            esp_mqtt_client_publish(client, "/test/topic", "ESP32 conectado!", 0, 1, 0);
+            // Publicar estado online con IP
+            char json_message[100];
+            // Usamos la variable global device_ip en lugar de un valor estático
+            snprintf(json_message, sizeof(json_message), "{\"status\":\"online\",\"ip\":\"%s\"}", device_ip);
+            esp_mqtt_client_publish(client, "/device/status", json_message, strlen(json_message), 1, true);
             break;
             
         case MQTT_EVENT_DISCONNECTED:
@@ -305,7 +309,11 @@ void mqtt_app_stop(void) {
     
     // Publicar mensaje de desconexión si estamos conectados
     if (mqtt_connected) {
-        esp_mqtt_client_publish(client, "/test/topic", "ESP32 desconectado", 0, 1, 0);
+        
+        char json_message[100];
+
+        snprintf(json_message, sizeof(json_message), "{\"status\":\"offline\",\"ip\":\"%s\"}", device_ip);
+        esp_mqtt_client_publish(client, "/device/status", json_message, strlen(json_message), 1, true);
         esp_mqtt_client_disconnect(client);
     }
     
@@ -315,4 +323,13 @@ void mqtt_app_stop(void) {
     client = NULL;
     
     ESP_LOGI(TAG, "Cliente MQTT detenido y recursos liberados");
+}
+
+// Añade esta función en mqtt_app.c
+void mqtt_app_set_ip(const char* ip) {
+    if (ip) {
+        strncpy(device_ip, ip, sizeof(device_ip) - 1);
+        device_ip[sizeof(device_ip) - 1] = '\0'; // Garantizar terminación NULL
+        ESP_LOGI(TAG, "IP actualizada: %s", device_ip);
+    }
 }

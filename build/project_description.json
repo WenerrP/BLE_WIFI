@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "BLE_WIFI",
-    "project_version":    "e1569c9-dirty",
+    "project_version":    "11ef607-dirty",
     "project_path":       "C:/Users/wener/BLE_WIFI",
     "idf_path":           "C:/Users/wener/esp/v5.3.2/esp-idf",
     "build_dir":          "C:/Users/wener/BLE_WIFI/build",
