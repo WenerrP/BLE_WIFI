@@ -341,16 +341,10 @@ void process_led_command(char command)
 }
 
 static void publish_device_status(const char* status) {
-    if (!mqtt_app_is_connected()) {
-        return;
+    if (mqtt_app_is_connected()) {
+        mqtt_app_publish_status(status);
+        ESP_LOGI(TAG, "Estado del dispositivo publicado: %s", status);
     }
-    
-    char json_message[100];
-    snprintf(json_message, sizeof(json_message), "{\"status\":\"%s\",\"ip\":\"%s\"}", 
-             status, device_ip);
-    
-    mqtt_app_publish("/device/status", json_message, strlen(json_message), 1, true);
-    ESP_LOGI(TAG, "Estado del dispositivo publicado: %s", json_message);
 }
 
 void app_main(void)
@@ -603,7 +597,7 @@ void app_main(void)
     }
 #else
     // Bucle principal con publicación periódica de estado
-    const int HEARTBEAT_INTERVAL_MS = 60000; // 1 minuto
+    const int HEARTBEAT_INTERVAL_MS = 10000; // 1 minuto
     int last_heartbeat = 0;
     
     while (1) {
@@ -613,6 +607,16 @@ void app_main(void)
         if (current_time - last_heartbeat >= HEARTBEAT_INTERVAL_MS) {
             if (mqtt_app_is_connected()) {
                 publish_device_status("online");
+                
+                // También podemos enviar telemetría periódica
+                cJSON *telemetry = cJSON_CreateObject();
+                cJSON_AddNumberToObject(telemetry, "uptime_s", current_time / 1000);
+                cJSON_AddNumberToObject(telemetry, "free_heap", esp_get_free_heap_size());
+                cJSON_AddNumberToObject(telemetry, "active_led", current_active_led);
+                
+                mqtt_app_publish_telemetry(telemetry);
+                // cJSON_Delete(telemetry); No es necesario, la función publish_telemetry toma la propiedad
+                
                 last_heartbeat = current_time;
             }
         }

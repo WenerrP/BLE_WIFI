@@ -6,4 +6,5 @@ idf_component_register(SRCS "app_main.c"
                       wifi_provisioning 
                       nvs_flash 
                       mqtt 
-                      driver)
+                      driver
+                      json)

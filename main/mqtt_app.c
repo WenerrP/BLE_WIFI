@@ -9,6 +9,19 @@
 #include "mqtt_app.h"
 #include "esp_wifi.h"
 #include "esp_mac.h"
+#include "cJSON.h"
+
+// Constantes para tipos de mensajes MQTT
+#define MQTT_MSG_TYPE_COMMAND        "command"
+#define MQTT_MSG_TYPE_STATUS         "status"
+#define MQTT_MSG_TYPE_TELEMETRY      "telemetry"
+#define MQTT_MSG_TYPE_RESPONSE       "response"
+
+// Tópicos MQTT estándar
+#define MQTT_TOPIC_DEVICE_COMMANDS   "/device/commands"
+#define MQTT_TOPIC_DEVICE_STATUS     "/device/status" 
+#define MQTT_TOPIC_DEVICE_TELEMETRY  "/device/telemetry"
+#define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
 
 static const char *TAG = "MQTT_APP";
 static esp_mqtt_client_handle_t client = NULL;
@@ -16,6 +29,7 @@ static esp_timer_handle_t reconnect_timer = NULL;
 static int mqtt_retry_count = 0;
 static bool mqtt_connected = false;
 static char device_ip[16] = "0.0.0.0"; // Default IP
+static int current_active_led = 0; // Default active LED
 
 // Constantes para la gestión de MQTT
 #define MQTT_RECONNECT_TIMEOUT_MS 5000
@@ -28,6 +42,9 @@ static void mqtt_reconnect_timer_callback(void* arg);
 static uint32_t exponential_backoff(uint8_t retry_count);
 static void handle_mqtt_error(esp_mqtt_event_handle_t event);
 static void log_error_if_nonzero(const char *message, int error_code);
+static esp_err_t publish_json_status(const char* status);
+static esp_err_t publish_json_message(const char* topic, const char* type, cJSON *payload);
+static void process_json_command(const char* json_str);
 
 // Declaración externa para la función de procesamiento de comandos LED
 extern void process_led_command(char command);
@@ -97,14 +114,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             mqtt_retry_count = 0;
             mqtt_connected = true;
             
-            // Suscribirnos a los tópicos relevantes
-            esp_mqtt_client_subscribe(client, "/led/command", 0);
+            // Suscribirnos a los tópicos relevantes utilizando nuestra nomenclatura estandarizada
+            esp_mqtt_client_subscribe(client, MQTT_TOPIC_DEVICE_COMMANDS, 1);
             
-            // Publicar estado online con IP
-            char json_message[100];
-            // Usamos la variable global device_ip en lugar de un valor estático
-            snprintf(json_message, sizeof(json_message), "{\"status\":\"online\",\"ip\":\"%s\"}", device_ip);
-            esp_mqtt_client_publish(client, "/device/status", json_message, strlen(json_message), 1, true);
+            // Publicar estado online con JSON
+            publish_json_status("online");
             break;
             
         case MQTT_EVENT_DISCONNECTED:
@@ -140,9 +154,18 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
             
-            // Procesar comandos para los LEDs si el mensaje es un solo carácter
-            if (event->data_len == 1) {
-                process_led_command(event->data[0]);
+            // Crear una copia terminada en NULL del mensaje
+            char *data_copy = malloc(event->data_len + 1);
+            if (data_copy) {
+                memcpy(data_copy, event->data, event->data_len);
+                data_copy[event->data_len] = '\0';
+                
+                // Procesar como JSON para cualquier tópico relacionado con comandos
+                if (strncmp(event->topic, MQTT_TOPIC_DEVICE_COMMANDS, strlen(MQTT_TOPIC_DEVICE_COMMANDS)) == 0) {
+                    process_json_command(data_copy);
+                }
+                
+                free(data_copy);
             }
             break;
             
@@ -180,15 +203,23 @@ void mqtt_app_start(void) {
     
     ESP_LOGI(TAG, "MQTT Client ID: %s", client_id);
     
-    // Configurar el cliente MQTT
+    // Crear el mensaje LWT
+    char lwt_message[100];
+    snprintf(lwt_message, sizeof(lwt_message), "{\"type\":\"status\",\"status\":\"offline\",\"ip\":\"%s\"}", device_ip);
+
+    // Configurar el cliente MQTT con LWT
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = "mqtt://broker.emqx.io",
         .broker.address.port = 1883,
-        .session.keepalive = 120,
-        .session.disable_clean_session = false,
+        .session.keepalive = 30,  // Reducir keepalive para detección más rápida
         .network.timeout_ms = MQTT_NETWORK_TIMEOUT_MS,
-        .network.disable_auto_reconnect = true, // Manejamos la reconexión manualmente
         .credentials.client_id = client_id,
+        .credentials.username = NULL,
+        .session.last_will.topic = MQTT_TOPIC_DEVICE_STATUS,
+        .session.last_will.msg = lwt_message,
+        .session.last_will.msg_len = strlen(lwt_message),
+        .session.last_will.qos = 1,
+        .session.last_will.retain = 1
     };
     
     // Inicializar el cliente MQTT
@@ -332,4 +363,162 @@ void mqtt_app_set_ip(const char* ip) {
         device_ip[sizeof(device_ip) - 1] = '\0'; // Garantizar terminación NULL
         ESP_LOGI(TAG, "IP actualizada: %s", device_ip);
     }
+}
+
+// Añade estas funciones a mqtt_app.c
+
+// Función para publicar un mensaje de estado en JSON
+static esp_err_t publish_json_status(const char* status) {
+    if (!mqtt_connected && strcmp(status, "offline") != 0) {
+        return ESP_FAIL;
+    }
+    
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Error creando objeto JSON");
+        return ESP_FAIL;
+    }
+    
+    // Información básica
+    cJSON_AddStringToObject(root, "type", MQTT_MSG_TYPE_STATUS);
+    cJSON_AddStringToObject(root, "status", status);
+    cJSON_AddStringToObject(root, "ip", device_ip);
+    cJSON_AddNumberToObject(root, "uptime", esp_timer_get_time() / 1000000); // En segundos
+    
+    // Información adicional
+    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(root, "active_led", current_active_led);
+    
+    // Tiempo desde la última actualización
+    static uint32_t last_update_time = 0;
+    uint32_t current_time = esp_timer_get_time() / 1000000;
+    uint32_t time_since_last = last_update_time > 0 ? current_time - last_update_time : 0;
+    cJSON_AddNumberToObject(root, "time_since_last_update", time_since_last);
+    last_update_time = current_time;
+    
+    char *json_str = cJSON_Print(root);
+    esp_err_t ret = ESP_FAIL;
+    
+    if (json_str) {
+        // Usamos retain=true para que el último estado esté siempre disponible
+        ret = esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, json_str, 0, 1, true);
+        free(json_str);
+    }
+    
+    cJSON_Delete(root);
+    return (ret > 0) ? ESP_OK : ESP_FAIL;
+}
+
+// Función para publicar cualquier mensaje JSON
+static esp_err_t publish_json_message(const char* topic, const char* type, cJSON *payload) {
+    if (!mqtt_connected || !payload) {
+        return ESP_FAIL;
+    }
+    
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        ESP_LOGE(TAG, "Error creando objeto JSON");
+        return ESP_FAIL;
+    }
+    
+    cJSON_AddStringToObject(root, "type", type);
+    cJSON_AddItemToObject(root, "payload", payload); // Transfiere propiedad
+    
+    char *json_str = cJSON_Print(root);
+    esp_err_t ret = ESP_FAIL;
+    
+    if (json_str) {
+        ret = esp_mqtt_client_publish(client, topic, json_str, 0, 1, 0);
+        free(json_str);
+    }
+    
+    cJSON_Delete(root);
+    return (ret > 0) ? ESP_OK : ESP_FAIL;
+}
+
+// Procesar un comando recibido en formato JSON
+static void process_json_command(const char* json_str) {
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Error al analizar JSON: %s", json_str);
+        return;
+    }
+    
+    cJSON *type = cJSON_GetObjectItem(root, "type");
+    if (!type || !cJSON_IsString(type)) {
+        ESP_LOGW(TAG, "Mensaje JSON recibido no tiene tipo válido");
+        cJSON_Delete(root);
+        return;
+    }
+    
+    // Responder a un ping
+    if (strcmp(type->valuestring, "ping") == 0) {
+        ESP_LOGI(TAG, "Comando ping recibido, respondiendo");
+        
+        // Crear respuesta de ping
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddStringToObject(response, "type", "pong");
+        cJSON_AddStringToObject(response, "status", "online");
+        cJSON_AddStringToObject(response, "ip", device_ip);
+        cJSON_AddNumberToObject(response, "uptime", esp_timer_get_time() / 1000000);
+        cJSON_AddNumberToObject(response, "free_heap", esp_get_free_heap_size());
+        cJSON_AddNumberToObject(response, "active_led", current_active_led);
+        
+        // Publicar respuesta
+        char *json_str = cJSON_Print(response);
+        if (json_str) {
+            esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_RESPONSE, json_str, 0, 1, 0);
+            free(json_str);
+            ESP_LOGI(TAG, "Respuesta de ping enviada");
+        }
+        
+        cJSON_Delete(response);
+        cJSON_Delete(root);
+        return;
+    }
+    
+    // Procesar otros tipos de comandos como antes
+    if (strcmp(type->valuestring, MQTT_MSG_TYPE_COMMAND) == 0) {
+        cJSON *payload = cJSON_GetObjectItem(root, "payload");
+        if (!payload) {
+            ESP_LOGW(TAG, "Comando sin payload");
+            cJSON_Delete(root);
+            return;
+        }
+        
+        cJSON *cmd = cJSON_GetObjectItem(payload, "cmd");
+        if (cmd && cJSON_IsString(cmd)) {
+            ESP_LOGI(TAG, "Comando recibido: %s", cmd->valuestring);
+            
+            // Proceso de comandos para LEDs
+            if (strcmp(cmd->valuestring, "led_a") == 0) {
+                process_led_command('A');
+            } 
+            else if (strcmp(cmd->valuestring, "led_b") == 0) {
+                process_led_command('B');
+            }
+            else if (strcmp(cmd->valuestring, "led_c") == 0) {
+                process_led_command('C');
+            }
+            
+            // Envía una respuesta confirmando el comando
+            cJSON *response = cJSON_CreateObject();
+            cJSON_AddStringToObject(response, "cmd_received", cmd->valuestring);
+            cJSON_AddBoolToObject(response, "success", true);
+            
+            publish_json_message(MQTT_TOPIC_DEVICE_RESPONSE, MQTT_MSG_TYPE_RESPONSE, response);
+        }
+    }
+    
+    cJSON_Delete(root);
+}
+
+esp_err_t mqtt_app_publish_status(const char* status) {
+    return publish_json_status(status);
+}
+
+esp_err_t mqtt_app_publish_telemetry(cJSON *payload) {
+    return publish_json_message(MQTT_TOPIC_DEVICE_TELEMETRY, 
+                               MQTT_MSG_TYPE_TELEMETRY, 
+                               payload);
 }
