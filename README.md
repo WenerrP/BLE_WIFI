@@ -1,3 +1,39 @@
+📡 ESP32 WiFi Provisioning & MQTT Communication for Smart Medicine Dispenser & Bangle.js 2
+
+    Este proyecto desarrollado en ESP-IDF permite:
+
+✅ Provisionamiento dinámico de WiFi mediante la aplicación Mediwatch (ESP BLE Provisioning).
+✅ Conexión automática a un broker MQTT, habilitando la transmisión y recepción de datos en tiempo real.
+✅ Control y monitoreo de un dispensador de medicamentos, gestionando horarios y dosis.
+✅ Integración con el smartwatch Bangle.js 2, para notificaciones, alertas y confirmación de toma de medicamentos.
+
+Funcionalidades principales:
+
+    Almacenamiento y gestión segura de credenciales WiFi.
+    Conexión robusta y reconexión automática a MQTT.
+    Envío de datos a la nube (estado del dispensador, registros de uso).
+    Recepción de comandos MQTT para activar el dispensador o actualizar parámetros.
+    Comunicación bidireccional con el smartwatch vía MQTT.
+    Manejo de errores y fallback automático a modo de provisión si se pierde conexión.
+🚀 Tecnologías utilizadas:
+
+    ESP-IDF vX.X
+    MQTT (compatible con brokers públicos o privados)
+    ESP BLE Provisioning
+    Comunicación con Bangle.js 2 vía MQTT / API
+    
+📂 Estructura principal:
+
+    /main – Lógica de provisión WiFi, conexión MQTT y control del dispensador.
+    /components – Módulos auxiliares (MQTT manager, provisioning, tareas FreeRTOS).
+    /flash – Archivos de configuración para ESP provisioning.
+    
+🛠 Próximas mejoras
+
+    Soporte para múltiples usuarios.
+    Almacenamiento local de historial de eventos.
+    Actualizaciones OTA.
+
 | Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-S2 | ESP32-S3 |
 | ----------------- | ----- | -------- | -------- | -------- | -------- | -------- |
 
