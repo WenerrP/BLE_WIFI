@@ -601,25 +601,7 @@ void app_main(void)
     int last_heartbeat = 0;
     
     while (1) {
-        int current_time = esp_timer_get_time() / 1000;
-        
-        // Publicar estado cada minuto
-        if (current_time - last_heartbeat >= HEARTBEAT_INTERVAL_MS) {
-            if (mqtt_app_is_connected()) {
-                publish_device_status("online");
-                
-                // También podemos enviar telemetría periódica
-                cJSON *telemetry = cJSON_CreateObject();
-                cJSON_AddNumberToObject(telemetry, "uptime_s", current_time / 1000);
-                cJSON_AddNumberToObject(telemetry, "free_heap", esp_get_free_heap_size());
-                cJSON_AddNumberToObject(telemetry, "active_led", current_active_led);
-                
-                mqtt_app_publish_telemetry(telemetry);
-                // cJSON_Delete(telemetry); No es necesario, la función publish_telemetry toma la propiedad
-                
-                last_heartbeat = current_time;
-            }
-        }
+
         
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }

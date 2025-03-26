@@ -128,8 +128,22 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             // Suscribirnos a los tópicos relevantes utilizando nuestra nomenclatura estandarizada
             esp_mqtt_client_subscribe(client, MQTT_TOPIC_DEVICE_COMMANDS, 1);
             
-            // Publicar estado online con JSON
-            publish_json_status("online");
+            // Publicar estado online con JSON inmediatamente al conectar
+            cJSON *online_json = cJSON_CreateObject();
+            cJSON_AddStringToObject(online_json, "type", MQTT_MSG_TYPE_STATUS);
+            cJSON_AddStringToObject(online_json, "status", "online");
+            cJSON_AddStringToObject(online_json, "ip", device_ip);
+            cJSON_AddNumberToObject(online_json, "uptime", esp_timer_get_time() / 1000000);
+            cJSON_AddNumberToObject(online_json, "free_heap", esp_get_free_heap_size());
+            cJSON_AddNumberToObject(online_json, "active_led", mqtt_app_get_active_led());
+            
+            char *online_message = cJSON_Print(online_json);
+            if (online_message) {
+                esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, 
+                                    online_message, 0, 1, true);
+                free(online_message);
+            }
+            cJSON_Delete(online_json);
             break;
             
         case MQTT_EVENT_DISCONNECTED:
@@ -222,23 +236,35 @@ void mqtt_connect_init(void) {
     
     ESP_LOGI(TAG, "MQTT Client ID: %s", client_id);
     
-    // Crear el mensaje LWT
-    char lwt_message[100];
-    snprintf(lwt_message, sizeof(lwt_message), "{\"type\":\"status\",\"status\":\"offline\",\"ip\":\"%s\"}", device_ip);
+    // Crear el mensaje LWT en formato JSON
+    cJSON *lwt_json = cJSON_CreateObject();
+    cJSON_AddStringToObject(lwt_json, "type", MQTT_MSG_TYPE_STATUS);
+    cJSON_AddStringToObject(lwt_json, "status", "offline");
+    cJSON_AddStringToObject(lwt_json, "ip", device_ip);
+    cJSON_AddNumberToObject(lwt_json, "uptime", esp_timer_get_time() / 1000000);
+    
+    char *lwt_message = cJSON_Print(lwt_json);
+    cJSON_Delete(lwt_json);
+    
+    if (!lwt_message) {
+        ESP_LOGE(TAG, "Error creando mensaje LWT");
+        free(client_id);
+        return;
+    }
 
     // Configurar el cliente MQTT con LWT
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = "mqtt://broker.emqx.io",
         .broker.address.port = 1883,
-        .session.keepalive = 30,  // Reducir keepalive para detección más rápida
-        .network.timeout_ms = MQTT_NETWORK_TIMEOUT_MS,
+        .session.keepalive = 5,  // Reducir keepalive para detección más rápida
+        .network.timeout_ms = 500,
         .credentials.client_id = client_id,
         .credentials.username = NULL,
         .session.last_will.topic = MQTT_TOPIC_DEVICE_STATUS,
         .session.last_will.msg = lwt_message,
         .session.last_will.msg_len = strlen(lwt_message),
         .session.last_will.qos = 1,
-        .session.last_will.retain = 1
+        .session.last_will.retain = 1  // Importante: usar retain para que quede disponible
     };
     
     // Inicializar el cliente MQTT
@@ -246,6 +272,7 @@ void mqtt_connect_init(void) {
     if (client == NULL) {
         ESP_LOGE(TAG, "Error inicializando el cliente MQTT");
         free(client_id);
+        free(lwt_message);
         return;
     }
     
@@ -261,6 +288,7 @@ void mqtt_connect_init(void) {
         esp_mqtt_client_destroy(client);
         client = NULL;
         free(client_id);
+        free(lwt_message);
         return;
     }
     
@@ -273,6 +301,7 @@ void mqtt_connect_init(void) {
         esp_mqtt_client_destroy(client);
         client = NULL;
         free(client_id);
+        free(lwt_message);
         return;
     }
     
@@ -288,6 +317,7 @@ void mqtt_connect_init(void) {
     }
     
     free(client_id); // Liberamos la memoria del client_id una vez usado
+    free(lwt_message); // Liberamos la memoria del mensaje LWT
 }
 
 // Detener el cliente MQTT
@@ -306,9 +336,25 @@ void mqtt_connect_deinit(void) {
         reconnect_timer = NULL;
     }
     
-    // Publicar mensaje de desconexión si estamos conectados
+    // Publicar mensaje de desconexión explícito si estamos conectados
     if (mqtt_connected) {
-        publish_json_status("offline");
+        cJSON *offline_json = cJSON_CreateObject();
+        cJSON_AddStringToObject(offline_json, "type", MQTT_MSG_TYPE_STATUS);
+        cJSON_AddStringToObject(offline_json, "status", "offline");
+        cJSON_AddStringToObject(offline_json, "ip", device_ip);
+        cJSON_AddStringToObject(offline_json, "reason", "controlled_shutdown");
+        
+        char *offline_message = cJSON_Print(offline_json);
+        if (offline_message) {
+            esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, 
+                                offline_message, 0, 1, true);
+            free(offline_message);
+        }
+        cJSON_Delete(offline_json);
+        
+        // Pequeña pausa para asegurar que el mensaje se envíe
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        
         esp_mqtt_client_disconnect(client);
     }
     
@@ -316,7 +362,8 @@ void mqtt_connect_deinit(void) {
     esp_mqtt_client_stop(client);
     esp_mqtt_client_destroy(client);
     client = NULL;
-    
+    mqtt_connected = false;
+
     ESP_LOGI(TAG, "Cliente MQTT detenido y recursos liberados");
 }
 
