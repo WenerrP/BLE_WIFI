@@ -1,4 +1,4 @@
-idf_component_register(SRCS "app_main.c"
+idf_component_register(SRCS "mqtt_publication.c" "mqtt_subscription.c" "mqtt_connection.c" "app_main.c"
                             "mqtt_app.c" 
                       INCLUDE_DIRS "."
                       REQUIRES 

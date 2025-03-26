@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "BLE_WIFI",
-    "project_version":    "965706f-dirty",
+    "project_version":    "8e5cf37-dirty",
     "project_path":       "C:/Users/wener/BLE_WIFI",
     "idf_path":           "C:/Users/wener/esp/v5.3.2/esp-idf",
     "build_dir":          "C:/Users/wener/BLE_WIFI/build",
@@ -1195,7 +1195,7 @@
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__qrcode" ],
             "file": "C:/Users/wener/BLE_WIFI/build/esp-idf/main/libmain.a",
-            "sources": [ "C:/Users/wener/BLE_WIFI/main/app_main.c", "C:/Users/wener/BLE_WIFI/main/mqtt_app.c" ],
+            "sources": [ "C:/Users/wener/BLE_WIFI/main/mqtt_publication.c", "C:/Users/wener/BLE_WIFI/main/mqtt_subscription.c", "C:/Users/wener/BLE_WIFI/main/mqtt_connection.c", "C:/Users/wener/BLE_WIFI/main/app_main.c", "C:/Users/wener/BLE_WIFI/main/mqtt_app.c" ],
             "include_dirs": [ "." ]
         },
         "mbedtls": {

@@ -15,7 +15,9 @@
         "esp_log.h": "c",
         "mqtt_client.h": "c",
         "esp_event.h": "c",
-        "esp_wifi.h": "c"
+        "esp_wifi.h": "c",
+        "esp_mac.h": "c",
+        "mqtt_manager_config.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"

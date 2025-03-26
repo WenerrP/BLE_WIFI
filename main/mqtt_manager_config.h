@@ -1,7 +1,7 @@
 #ifndef MQTT_MANAGER_CONFIG_H
 #define MQTT_MANAGER_CONFIG_H
 
-#include <cstdint>
+#include <stdint.h>
 
 #define MQTT_BROKER_URI "mqtts://broker.emqx.io:8883"
 #define MQTT_KEEPALIVE 120

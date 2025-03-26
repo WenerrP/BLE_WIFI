@@ -2,23 +2,30 @@
 #define MQTT_APP_H
 
 #include <esp_err.h>
+#include <stdbool.h>  // Para el tipo bool
 #include "cJSON.h"
 
-// Constantes exportadas
+// Constantes exportadas para tipos de mensajes MQTT
 #define MQTT_MSG_TYPE_COMMAND        "command"
 #define MQTT_MSG_TYPE_STATUS         "status"
 #define MQTT_MSG_TYPE_TELEMETRY      "telemetry"
 #define MQTT_MSG_TYPE_RESPONSE       "response"
 
+// Tópicos MQTT estándar
 #define MQTT_TOPIC_DEVICE_COMMANDS   "/device/commands"
 #define MQTT_TOPIC_DEVICE_STATUS     "/device/status" 
 #define MQTT_TOPIC_DEVICE_TELEMETRY  "/device/telemetry"
 #define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
 
 /**
- * @brief Inicia el cliente MQTT y establece la conexión con el broker
+ * @brief Inicia el módulo MQTT completo (conexión, suscripciones, etc.)
  */
-void mqtt_app_start(void);
+void mqtt_app_init(void);
+
+/**
+ * @brief Detiene el módulo MQTT completo
+ */
+void mqtt_app_deinit(void);
 
 /**
  * @brief Establece la dirección IP del dispositivo para informes de estado
@@ -35,7 +42,7 @@ void mqtt_app_set_ip(const char* ip);
 bool mqtt_app_is_connected(void);
 
 /**
- * @brief Publica un mensaje JSON de estado
+ * @brief Publica un mensaje JSON de estado (wrapper para mqtt_pub_status)
  * 
  * @param status Cadena con el estado ("online", "offline", etc.)
  * @return esp_err_t ESP_OK si se publicó correctamente
@@ -43,7 +50,7 @@ bool mqtt_app_is_connected(void);
 esp_err_t mqtt_app_publish_status(const char* status);
 
 /**
- * @brief Publica un mensaje JSON de telemetría
+ * @brief Publica un mensaje JSON de telemetría (wrapper para mqtt_pub_telemetry)
  * 
  * @param payload Objeto cJSON con los datos de telemetría
  * @return esp_err_t ESP_OK si se publicó correctamente
@@ -51,7 +58,7 @@ esp_err_t mqtt_app_publish_status(const char* status);
 esp_err_t mqtt_app_publish_telemetry(cJSON *payload);
 
 /**
- * @brief Publica un mensaje en un tópico MQTT
+ * @brief Publica un mensaje en un tópico MQTT (wrapper para mqtt_pub_message)
  * 
  * @param topic Tópico donde publicar
  * @param data Datos a publicar
@@ -63,7 +70,7 @@ esp_err_t mqtt_app_publish_telemetry(cJSON *payload);
 esp_err_t mqtt_app_publish(const char *topic, const char *data, int len, int qos, bool retain);
 
 /**
- * @brief Suscribe al cliente a un tópico MQTT
+ * @brief Suscribe al cliente a un tópico MQTT (wrapper para mqtt_sub_subscribe)
  * 
  * @param topic Tópico a suscribirse
  * @param qos Calidad de servicio (0, 1 o 2)
@@ -72,7 +79,7 @@ esp_err_t mqtt_app_publish(const char *topic, const char *data, int len, int qos
 esp_err_t mqtt_app_subscribe(const char *topic, int qos);
 
 /**
- * @brief Cancela la suscripción a un tópico MQTT
+ * @brief Cancela la suscripción a un tópico MQTT (wrapper para mqtt_sub_unsubscribe)
  * 
  * @param topic Tópico a cancelar suscripción
  * @return esp_err_t ESP_OK si la operación fue exitosa
@@ -80,11 +87,25 @@ esp_err_t mqtt_app_subscribe(const char *topic, int qos);
 esp_err_t mqtt_app_unsubscribe(const char *topic);
 
 /**
- * @brief Detiene el cliente MQTT y libera recursos
+ * @brief Obtiene el valor actual del LED activo
+ * 
+ * @return int Número del LED activo (0=ninguno, 1=A, 2=B, 3=C)
  */
-void mqtt_app_stop(void);
+int mqtt_app_get_active_led(void);
+
+/**
+ * @brief Establece el valor del LED activo
+ * 
+ * @param led_num Número del LED activo (0=ninguno, 1=A, 2=B, 3=C)
+ */
+void mqtt_app_set_active_led(int led_num);
+
+/**
+ * @brief Inicia MQTT desde app_main.c
+ */
+void mqtt_app_start(void);
 
 // Callback para procesar comandos LED
-void process_led_command(char command);
+void mqtt_app_process_led_command(char command);
 
 #endif /* MQTT_APP_H */
