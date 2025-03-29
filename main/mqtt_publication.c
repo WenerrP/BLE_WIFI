@@ -1,10 +1,13 @@
+#include <string.h>         // Para strncpy, strcmp
+#include <stdio.h>          // Para printf, sprintf
 #include "mqtt_publication.h"
 #include "mqtt_connection.h"
-#include "mqtt_app.h" // Para las constantes de tópicos y funciones
+#include "mqtt_app.h"       // Para las constantes de tópicos y funciones
 #include "esp_log.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "mqtt_client.h"    // Para esp_mqtt_client_handle_t y esp_mqtt_client_publish
 #include "sdkconfig.h" 
 
 static const char *TAG = "MQTT_PUB";

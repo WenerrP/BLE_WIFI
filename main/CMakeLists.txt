@@ -7,4 +7,5 @@ idf_component_register(SRCS "mqtt_publication.c" "mqtt_subscription.c" "mqtt_con
                       nvs_flash 
                       mqtt 
                       driver
-                      json)
+                      json
+                      esp_netif)

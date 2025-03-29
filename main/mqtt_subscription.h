@@ -2,6 +2,7 @@
 #define MQTT_SUBSCRIPTION_H
 
 #include <esp_err.h>
+#include <stdbool.h>  // Para el tipo bool
 
 /**
  * @brief Procesa un comando JSON recibido
@@ -33,5 +34,12 @@ esp_err_t mqtt_sub_unsubscribe(const char *topic);
  * @return esp_err_t ESP_OK si la operación fue exitosa
  */
 esp_err_t mqtt_sub_init(void);
+
+/**
+ * @brief Obtiene la dirección IP actual del dispositivo
+ * 
+ * @return Cadena con la dirección IP
+ */
+char* mqtt_sub_get_device_ip(void);
 
 #endif // MQTT_SUBSCRIPTION_H

@@ -2,7 +2,9 @@
 #define MQTT_CONNECTION_H
 
 #include <esp_err.h>
-#include "mqtt_client.h"
+#include <stdbool.h>        // Para el tipo bool
+#include "mqtt_client.h"    // Para esp_mqtt_client_handle_t
+#include "esp_event.h"      // Para esp_event_handler_t
 
 // Constantes para la gestión de MQTT
 #define MQTT_RECONNECT_TIMEOUT_MS 5000
