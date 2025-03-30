@@ -18,7 +18,12 @@
         "esp_wifi.h": "c",
         "esp_mac.h": "c",
         "mqtt_manager_config.h": "c",
-        "esp_netif.h": "c"
+        "esp_netif.h": "c",
+        "gpio.h": "c",
+        "manager.h": "c",
+        "mqtt_app.h": "c",
+        "wifi_provisioning.h": "c",
+        "scheme_ble.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"

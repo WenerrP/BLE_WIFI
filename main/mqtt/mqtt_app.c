@@ -14,7 +14,7 @@ static int current_active_led = 0; // 0=ninguno, 1=A, 2=B, 3=C
 static bool mqtt_initialized = false;
 
 // Declaración externa de la función real en app_main.c
-static void process_led_command(char command);
+extern void process_led_command(char command);
 
 // Esta función es un wrapper que llama a la implementación real
 void mqtt_app_process_led_command(char command) {

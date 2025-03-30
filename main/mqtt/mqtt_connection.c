@@ -256,8 +256,11 @@ void mqtt_connect_init(void) {
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = "mqtt://broker.emqx.io",
         .broker.address.port = 1883,
-        .session.keepalive = 5,  // Reducir keepalive para detección más rápida
-        .network.timeout_ms = 500,
+        .session.keepalive = 120,  // Reducir keepalive para detección más rápida
+        .network = {
+            .reconnect_timeout_ms = 10000,
+            .timeout_ms = 10000,
+        },
         .credentials.client_id = client_id,
         .credentials.username = NULL,
         .session.last_will.topic = MQTT_TOPIC_DEVICE_STATUS,

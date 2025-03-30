@@ -49,15 +49,46 @@ void process_json_command(const char* json_str) {
     if (strstr(json_str, "\"type\":\"ping\"") != NULL) {
         ESP_LOGI(TAG, "Ping detectado, respondiendo rápidamente");
         
+        // Extraer clientId del mensaje JSON
+        char client_id[33] = ""; // Buffer para clientId (32 caracteres máximo + null terminator)
+        const char *client_id_marker = "\"clientId\":\"";
+        char *client_id_start = strstr(json_str, client_id_marker);
+        
+        if (client_id_start) {
+            // Avanzar al inicio del valor del clientId
+            client_id_start += strlen(client_id_marker);
+            
+            // Copiar hasta encontrar el cierre de comillas
+            int i = 0;
+            while (i < sizeof(client_id) - 1 && client_id_start[i] != '\"' && client_id_start[i] != '\0') {
+                client_id[i] = client_id_start[i];
+                i++;
+            }
+            client_id[i] = '\0'; // Asegurar terminación null
+            
+            ESP_LOGI(TAG, "ClientID extraído: %s", client_id);
+        } else {
+            ESP_LOGW(TAG, "No se encontró clientId en el mensaje ping");
+        }
+        
         // Crear una respuesta pong mínima pero informativa
-        char pong_buffer[128];
+        char pong_buffer[256]; // Aumentado para acomodar clientId
         snprintf(pong_buffer, sizeof(pong_buffer), 
-                "{\"type\":\"pong\",\"status\":\"online\",\"ip\":\"%s\",\"uptime\":%llu}", 
-                mqtt_sub_get_device_ip(), esp_timer_get_time() / 1000000);
+                "{\"type\":\"pong\",\"status\":\"online\",\"ip\":\"%s\",\"uptime\":%llu,\"clientId\":\"%s\",\"timestamp\":%llu,\"payload\":{}}", 
+                mqtt_sub_get_device_ip(), 
+                esp_timer_get_time() / 1000000,
+                client_id,
+                esp_timer_get_time() / 1000);
         
         esp_mqtt_client_handle_t client = mqtt_connect_get_client();
         if (client != NULL) {
-            esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, pong_buffer, 0, 0, false);
+            ESP_LOGI(TAG, "Enviando pong al tópico: %s", MQTT_TOPIC_DEVICE_STATUS);
+            int msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, pong_buffer, 0, 0, false);
+            if (msg_id >= 0) {
+                ESP_LOGI(TAG, "Respuesta pong enviada correctamente, msg_id=%d", msg_id);
+            } else {
+                ESP_LOGW(TAG, "Error enviando respuesta pong");
+            }
         }
         
         // Aún procesamos el JSON para otros posibles comandos
@@ -214,6 +245,11 @@ esp_err_t mqtt_sub_init(void) {
     
     // Suscribirse a todos los tópicos necesarios
     esp_err_t ret = mqtt_sub_subscribe(MQTT_TOPIC_DEVICE_COMMANDS, 1);
+    
+    // También suscribirse al tópico de estado (por si acaso la app envía pings allí)
+    if (ret == ESP_OK) {
+        ret = mqtt_sub_subscribe(MQTT_TOPIC_DEVICE_STATUS, 1);
+    }
     
     return ret;
 }

@@ -1,11 +1,21 @@
-idf_component_register(SRCS "mqtt_publication.c" "mqtt_subscription.c" "mqtt_connection.c" "app_main.c"
-                            "mqtt_app.c" 
-                      INCLUDE_DIRS "."
-                      REQUIRES 
-                      esp_wifi 
-                      wifi_provisioning 
-                      nvs_flash 
-                      mqtt 
-                      driver
-                      json
-                      esp_netif)
+idf_component_register(
+    SRCS 
+        "app_main.c"
+        "wifi_provisioning.c"
+        "mqtt/mqtt_app.c"
+        "mqtt/mqtt_connection.c"
+        "mqtt/mqtt_publication.c"
+        "mqtt/mqtt_subscription.c"
+    INCLUDE_DIRS 
+        "."
+        "mqtt"
+    REQUIRES 
+        nvs_flash 
+        esp_wifi 
+        esp_netif 
+        wifi_provisioning 
+        protocomm 
+        json 
+        driver
+        mqtt
+)
