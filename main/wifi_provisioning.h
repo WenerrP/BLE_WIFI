@@ -58,4 +58,14 @@ void wifi_provisioning_reset_for_reprovision(void);
  */
 void wifi_provisioning_set_callback(void (*callback)(char *ip));
 
+/**
+ * @brief Callback para notificar fallos en la conexión WiFi
+ * 
+ * Esta función permite que el sistema principal sea notificado
+ * cuando hay un fallo en la conexión WiFi.
+ * 
+ * @param callback Función a llamar cuando hay un fallo de conexión
+ */
+void wifi_provisioning_set_failure_callback(void (*callback)(void));
+
 #endif /* WIFI_PROVISIONING_H */

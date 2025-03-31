@@ -31,6 +31,7 @@
 // Variables estáticas para el módulo
 static const char *TAG = "wifi_prov";
 static EventGroupHandle_t wifi_event_group;
+static bool provisioned = false;  // Añadir esta línea
 
 #define PROV_QR_VERSION         "v1"
 #define PROV_TRANSPORT_SOFTAP   "softap"
@@ -38,6 +39,7 @@ static EventGroupHandle_t wifi_event_group;
 
 // Callback para notificar eventos WiFi hacia la aplicación principal
 static void (*connected_callback)(char *ip) = NULL;
+static void (*failure_callback)(void) = NULL;
 
 #if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
 #if CONFIG_EXAMPLE_PROV_SEC2_DEV_MODE
@@ -162,6 +164,11 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             case WIFI_EVENT_STA_DISCONNECTED:
                 ESP_LOGI(TAG, "Disconnected. Connecting to the AP again...");
                 esp_wifi_connect();
+                
+                // Notificar al sistema principal del fallo de conexión
+                if (failure_callback != NULL) {
+                    failure_callback();
+                }
                 break;
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
             case WIFI_EVENT_AP_STACONNECTED:
@@ -268,8 +275,23 @@ void wifi_provisioning_wait_for_connection(EventGroupHandle_t event_group)
 
 void wifi_provisioning_reset_for_reprovision(void)
 {
-    ESP_LOGI(TAG, "Resetting provisioning state machine for re-provisioning");
-    wifi_prov_mgr_reset_sm_state_for_reprovision();
+    ESP_LOGI(TAG, "Reiniciando sistema de provisioning para nueva configuración");
+    
+    // Detener WiFi de forma segura
+    if (esp_wifi_stop() != ESP_OK) {
+        ESP_LOGW(TAG, "Fallo al detener WiFi");
+    }
+    
+    // Intentar reiniciar el provisioning en el gestor si está inicializado
+    if (wifi_prov_mgr_reset_provisioning() != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo reiniciar el provisioning, es posible que el gestor no esté inicializado");
+    }
+    
+    // Marcar como no provisionado para reiniciar todo el proceso
+    provisioned = false;
+    
+    // Retrasar un poco para asegurar que todos los procesos se completen
+    vTaskDelay(pdMS_TO_TICKS(500));
 }
 
 EventGroupHandle_t wifi_provisioning_init(void)
@@ -340,7 +362,6 @@ EventGroupHandle_t wifi_provisioning_init(void)
      * configuration parameters set above */
     ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
 
-    bool provisioned = false;
 #ifdef CONFIG_EXAMPLE_RESET_PROVISIONED
     wifi_prov_mgr_reset_provisioning();
 #else
@@ -348,6 +369,7 @@ EventGroupHandle_t wifi_provisioning_init(void)
     ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
 
 #endif
+
     /* If device is not yet provisioned start provisioning service */
     if (!provisioned) {
         ESP_LOGI(TAG, "Starting provisioning");
@@ -507,4 +529,16 @@ EventGroupHandle_t wifi_provisioning_init(void)
 void wifi_provisioning_set_callback(void (*callback)(char *ip))
 {
     connected_callback = callback;
+}
+
+/**
+ * @brief Registra una función de callback para notificación de fallo de conexión WiFi
+ * 
+ * Esta función permite al módulo principal registrar una función que será
+ * llamada cuando ocurra un fallo de conexión WiFi.
+ * 
+ * @param callback Función a llamar cuando ocurra un fallo
+ */
+void wifi_provisioning_set_failure_callback(void (*callback)(void)) {
+    failure_callback = callback;
 }
