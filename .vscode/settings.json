@@ -23,7 +23,8 @@
         "manager.h": "c",
         "mqtt_app.h": "c",
         "wifi_provisioning.h": "c",
-        "scheme_ble.h": "c"
+        "scheme_ble.h": "c",
+        "medication_storage.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"
