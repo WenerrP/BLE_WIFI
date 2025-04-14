@@ -9,15 +9,16 @@
  */
 typedef struct {
     char id[32];
-    int time_in_minutes;         // Hora en minutos desde medianoche (0-1439)
-    bool interval_mode;          // True: modo intervalo, False: modo días de semana
-    int interval_hours;          // Horas entre dosis (modo intervalo)
-    int treatment_days;          // Días totales de tratamiento
-    int64_t treatment_end_date;  // Timestamp fin de tratamiento
-    int days[7];                 // Días de la semana (1-7 para Lun-Dom)
-    int days_count;              // Número de días en el arreglo days
-    int64_t next_dispense_time;  // Timestamp próxima dispensación
-    int64_t last_dispensed_time; // Timestamp última dispensación
+    uint16_t time_in_minutes;     // Tiempo en minutos desde el inicio del día (0-1439)
+    bool interval_mode;           // Si es true, usar intervalos de horas en vez de días fijos
+    uint8_t interval_hours;       // Horas entre dosis (modo intervalo)
+    uint8_t treatment_days;       // Días totales de tratamiento (modo intervalo)
+    uint8_t days_count;           // Número de días seleccionados (0-7)
+    uint8_t days[7];              // Días de la semana: 1=lunes, 7=domingo
+    uint8_t _padding;             // Para alineación
+    int64_t treatment_end_date;   // Fecha fin del tratamiento (timestamp en ms)
+    int64_t next_dispense_time;   // Próxima dispensación programada (timestamp en ms)
+    int64_t last_dispensed_time;  // Última dispensación (timestamp en ms)
 } medication_schedule_t;
 
 /**

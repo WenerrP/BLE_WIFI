@@ -10,12 +10,14 @@
 #define MQTT_MSG_TYPE_STATUS         "status"
 #define MQTT_MSG_TYPE_TELEMETRY      "telemetry"
 #define MQTT_MSG_TYPE_RESPONSE       "response"
+#define MQTT_MSG_TYPE_MED_CONFIRM    "med_confirmation"  // Nuevo tipo para confirmaciones de medicamentos
 
 // Tópicos MQTT estándar
 #define MQTT_TOPIC_DEVICE_COMMANDS   "/device/commands"
 #define MQTT_TOPIC_DEVICE_STATUS     "/device/status" 
 #define MQTT_TOPIC_DEVICE_TELEMETRY  "/device/telemetry"
 #define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
+#define MQTT_TOPIC_MED_CONFIRMATION  "/device/med_confirmation"  // Nuevo tópico para confirmaciones
 
 /**
  * @brief Inicia el módulo MQTT completo (conexión, suscripciones, etc.)
@@ -107,5 +109,15 @@ void mqtt_app_start(void);
 
 // Callback para procesar comandos LED
 void mqtt_app_process_led_command(char command);
+
+/**
+ * @brief Publica una confirmación sobre la recepción y procesamiento de medicamentos
+ * 
+ * @param success Indicador de éxito (true) o error (false)
+ * @param message Mensaje descriptivo del resultado
+ * @param timestamp Marca de tiempo de la solicitud original (0 para usar timestamp actual)
+ * @return esp_err_t ESP_OK si la publicación fue exitosa
+ */
+esp_err_t mqtt_app_publish_med_confirmation(bool success, const char* message, int64_t timestamp);
 
 #endif /* MQTT_APP_H */

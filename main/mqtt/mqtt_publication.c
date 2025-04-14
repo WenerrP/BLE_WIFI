@@ -112,3 +112,53 @@ esp_err_t mqtt_pub_telemetry(cJSON *payload) {
                                MQTT_MSG_TYPE_TELEMETRY, 
                                payload);
 }
+
+esp_err_t mqtt_app_publish_med_confirmation(bool success, const char* message, int64_t timestamp) {
+    if (!mqtt_connect_is_connected()) {
+        ESP_LOGW(TAG, "No se puede enviar confirmación de medicamentos: MQTT no conectado");
+        return ESP_FAIL;
+    }
+    
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        ESP_LOGE(TAG, "Error creando objeto JSON para confirmación de medicamentos");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Información básica del mensaje
+    cJSON_AddStringToObject(root, "type", MQTT_MSG_TYPE_MED_CONFIRM);
+    cJSON_AddBoolToObject(root, "success", success);
+    
+    // Añadir mensaje descriptivo
+    if (message) {
+        cJSON_AddStringToObject(root, "message", message);
+    } else {
+        cJSON_AddStringToObject(root, "message", success ? "Medicamentos procesados correctamente" : "Error al procesar medicamentos");
+    }
+    
+    // Usar timestamp proporcionado o el actual
+    int64_t current_time = (timestamp > 0) ? timestamp : (esp_timer_get_time() / 1000);
+    cJSON_AddNumberToObject(root, "timestamp", current_time);
+    
+    // Información adicional útil
+    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+    
+    // Convertir a string JSON
+    char *json_str = cJSON_Print(root);
+    if (!json_str) {
+        ESP_LOGE(TAG, "Error generando string JSON para confirmación de medicamentos");
+        cJSON_Delete(root);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Publicar el mensaje con QoS 1 para garantizar entrega
+    esp_err_t result = mqtt_pub_message(MQTT_TOPIC_MED_CONFIRMATION, json_str, 0, 1, false);
+    
+    ESP_LOGI(TAG, "Confirmación de medicamentos enviada: %s (%s)", 
+             success ? "ÉXITO" : "ERROR", message ? message : "");
+    
+    free(json_str);
+    cJSON_Delete(root);
+    
+    return result;
+}

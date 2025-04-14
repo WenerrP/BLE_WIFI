@@ -10,6 +10,9 @@
 #include "esp_system.h"
 #include "medication_storage.h"
 
+// Define the maximum length for medication ID
+#define MEDICATION_ID_MAX_LEN 64
+
 static const char *TAG = "MEDICATION_STORAGE";
 static const char *NVS_NAMESPACE = "medications";
 static const char *NVS_MED_COUNT_KEY = "med_count";
@@ -19,12 +22,179 @@ static nvs_handle_t med_nvs_handle = 0;
 static medication_t *medications = NULL;
 static int medications_count = 0;
 
+// Añadir después de las declaraciones de variables
+
+#define LRU_CACHE_SIZE 3  // Pequeña caché para los medicamentos más usados
+static struct {
+    char id[MEDICATION_ID_MAX_LEN];
+    medication_t *med_ptr;
+    uint32_t last_access;
+} lru_cache[LRU_CACHE_SIZE] = {0};
+static uint32_t access_counter = 0;
+
+// Añadir estas variables estáticas al inicio del archivo, junto con las otras variables globales
+static int id_counter = 0;  // Contador para generar claves cortas
+
 // Declaraciones de funciones auxiliares
 static esp_err_t save_medication_to_nvs(const medication_t *medication);
 static esp_err_t load_medications_from_nvs(void);
 static esp_err_t save_medications_index(void);
 static int64_t calculate_next_dispense_time(medication_schedule_t *schedule);
 static int64_t get_current_time_ms(void);
+// Añadir esta línea:
+static void format_time(int64_t timestamp_ms, char *buffer, size_t size);
+
+// Añadir estas funciones a tu archivo
+
+// Corregir la función create_short_key
+static char* create_short_key(const char* medication_id) {
+    static char short_key[16];  // Buffer para almacenar la clave corta
+    
+    // Opciones para generar claves cortas:
+    
+    // Opción 1: Usar un contador simple (med_0, med_1, etc.)
+    snprintf(short_key, sizeof(short_key), "med_%d", id_counter++);
+    
+    // Opción 2: Usar los primeros caracteres del ID
+    // strncpy(short_key, medication_id, 10);
+    // short_key[10] = '\0';
+    // strncat(short_key, "_m", 2);
+    
+    return short_key;  // Asegurar que se retorne el valor
+}
+
+// Estructura para mapear IDs largos a claves cortas
+typedef struct {
+    char long_id[37];  // Tamaño suficiente para UUID
+    char short_key[16]; // 15 caracteres + NULL
+} id_mapping_t;
+
+#define MAX_MEDICATIONS 32
+static id_mapping_t id_map[MAX_MEDICATIONS];
+static int id_map_count = 0;
+
+static bool mapping_changed = false;  // Para reducir escrituras NVS
+
+// Función para obtener la clave corta a partir de un ID largo
+static const char* get_short_key(const char* long_id) {
+    // Primero buscar si ya existe un mapeo
+    for (int i = 0; i < id_map_count; i++) {
+        if (strcmp(id_map[i].long_id, long_id) == 0) {
+            return id_map[i].short_key;
+        }
+    }
+    
+    // Si no existe, crear uno nuevo (si hay espacio)
+    if (id_map_count < MAX_MEDICATIONS) {
+        strncpy(id_map[id_map_count].long_id, long_id, sizeof(id_map[id_map_count].long_id) - 1);
+        id_map[id_map_count].long_id[sizeof(id_map[id_map_count].long_id) - 1] = '\0';
+        
+        char* short_key = create_short_key(long_id);
+        strncpy(id_map[id_map_count].short_key, short_key, sizeof(id_map[id_map_count].short_key) - 1);
+        id_map[id_map_count].short_key[sizeof(id_map[id_map_count].short_key) - 1] = '\0';
+        
+        id_map_count++;
+        mapping_changed = true;  // Marcar que hay cambios pendientes
+        
+        return id_map[id_map_count - 1].short_key;
+    }
+    
+    // Si no hay espacio, devolver un valor predeterminado seguro
+    return "med_err";
+}
+
+// Función para cargar los mapeos desde NVS durante la inicialización
+static void load_id_mappings(void) {
+    id_map_count = 0;
+    
+    uint32_t count = 0;
+    esp_err_t err = nvs_get_u32(med_nvs_handle, "map_count", &count);
+    if (err == ESP_OK && count > 0) {
+        // Limitar al máximo soportado
+        if (count > MAX_MEDICATIONS) {
+            count = MAX_MEDICATIONS;
+        }
+        
+        for (uint32_t i = 0; i < count; i++) {
+            char map_key[16];
+            snprintf(map_key, sizeof(map_key), "map_%lu", (unsigned long)i);
+            
+            size_t required_size = 0;
+            err = nvs_get_str(med_nvs_handle, map_key, NULL, &required_size);
+            if (err != ESP_OK) {
+                continue;
+            }
+            
+            char *map_json = malloc(required_size);
+            if (!map_json) {
+                continue;
+            }
+            
+            err = nvs_get_str(med_nvs_handle, map_key, map_json, &required_size);
+            if (err != ESP_OK) {
+                free(map_json);
+                continue;
+            }
+            
+            cJSON *map_obj = cJSON_Parse(map_json);
+            free(map_json);
+            
+            if (!map_obj) {
+                continue;
+            }
+            
+            cJSON *long_id = cJSON_GetObjectItem(map_obj, "long");
+            cJSON *short_key = cJSON_GetObjectItem(map_obj, "short");
+            
+            if (long_id && cJSON_IsString(long_id) && short_key && cJSON_IsString(short_key)) {
+                strncpy(id_map[id_map_count].long_id, long_id->valuestring, sizeof(id_map[id_map_count].long_id) - 1);
+                id_map[id_map_count].long_id[sizeof(id_map[id_map_count].long_id) - 1] = '\0';
+                
+                strncpy(id_map[id_map_count].short_key, short_key->valuestring, sizeof(id_map[id_map_count].short_key) - 1);
+                id_map[id_map_count].short_key[sizeof(id_map[id_map_count].short_key) - 1] = '\0';
+                
+                id_map_count++;
+            }
+            
+            cJSON_Delete(map_obj);
+        }
+    }
+}
+
+// Añadir esta función después de load_id_mappings()
+
+// Añadir una nueva función para guardar los mapeos de forma diferida
+static void save_id_mappings_if_changed(void) {
+    if (!mapping_changed) {
+        return;  // No hay cambios para guardar
+    }
+    
+    ESP_LOGI(TAG, "Guardando mapeos ID-clave actualizados");
+    
+    // Actualizar contador primero
+    nvs_set_u32(med_nvs_handle, "map_count", id_map_count);
+    
+    // Guardar cada mapeo
+    for (int i = 0; i < id_map_count; i++) {
+        char map_key[16];
+        snprintf(map_key, sizeof(map_key), "map_%d", i);
+        
+        cJSON *map_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(map_obj, "long", id_map[i].long_id);
+        cJSON_AddStringToObject(map_obj, "short", id_map[i].short_key);
+        char *map_json = cJSON_Print(map_obj);
+        
+        if (map_json) {
+            nvs_set_str(med_nvs_handle, map_key, map_json);
+            free(map_json);
+        }
+        
+        cJSON_Delete(map_obj);
+    }
+    
+    nvs_commit(med_nvs_handle);
+    mapping_changed = false;
+}
 
 esp_err_t medication_storage_init(void) {
     esp_err_t err;
@@ -45,6 +215,9 @@ esp_err_t medication_storage_init(void) {
         ESP_LOGE(TAG, "Error opening NVS namespace: %s", esp_err_to_name(err));
         return err;
     }
+    
+    // Cargar mapeos de IDs
+    load_id_mappings();
     
     // Cargar medicamentos almacenados
     err = load_medications_from_nvs();
@@ -232,19 +405,36 @@ esp_err_t medication_storage_process_json(const char* json_str) {
                     } else {
                         // Modo días de semana
                         cJSON *days_array = cJSON_GetObjectItem(schedule_item, "days");
+                        
+                        // Versión optimizada para recuperar días de la semana
                         if (days_array && cJSON_IsArray(days_array)) {
                             int days_count = cJSON_GetArraySize(days_array);
                             schedule->days_count = 0;
                             
-                            // Procesar cada día
+                            // Reservar espacio para todos los días posibles
+                            uint8_t valid_days[7] = {0};
+                            int valid_count = 0;
+                            
+                            // Obtener días en un solo paso
                             for (int i = 0; i < days_count && i < 7; i++) {
                                 cJSON *day_item = cJSON_GetArrayItem(days_array, i);
                                 if (day_item && cJSON_IsNumber(day_item)) {
                                     int day = day_item->valueint;
-                                    if (day >= 1 && day <= 7) {
-                                        schedule->days[schedule->days_count++] = day;
+                                    if (day >= 1 && day <= 7 && !valid_days[day-1]) {
+                                        valid_days[day-1] = 1;
+                                        valid_count++;
                                     }
                                 }
+                            }
+                            
+                            // Ahora copiar todos los días válidos de una vez
+                            if (valid_count > 0) {
+                                for (int i = 0, j = 0; i < 7; i++) {
+                                    if (valid_days[i]) {
+                                        schedule->days[j++] = i + 1;
+                                    }
+                                }
+                                schedule->days_count = valid_count;
                             }
                         }
                         
@@ -282,8 +472,8 @@ esp_err_t medication_storage_process_json(const char* json_str) {
     // Calcular próximas dispensaciones
     medication_storage_update_next_dispense_times();
     
-    // Liberar memoria JSON
-    cJSON_Delete(root);
+    // Guardar mapeos si hubo cambios
+    save_id_mappings_if_changed();
     
     ESP_LOGI(TAG, "Successfully processed %d medications", medications_count);
     return ESP_OK;
@@ -334,31 +524,62 @@ static esp_err_t save_medication_to_nvs(const medication_t *medication) {
         }
     }
     
-    // Convertir a string JSON
-    char *json_str = cJSON_Print(med_obj);
-    cJSON_Delete(med_obj);
-    
-    if (!json_str) {
-        return ESP_ERR_NO_MEM;
+    // Convertir a string JSON - Versión optimizada
+    #define JSON_BUFFER_SIZE 2048  // Tamaño adecuado para almacenar un medicamento
+    static char json_buffer[JSON_BUFFER_SIZE];
+    if (cJSON_PrintPreallocated(med_obj, json_buffer, JSON_BUFFER_SIZE, false)) {
+        // Guardar en NVS usando la clave corta
+        const char* short_key = get_short_key(medication->id);
+        esp_err_t err = nvs_set_str(med_nvs_handle, short_key, json_buffer);
+        
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error saving medication to NVS: %s", esp_err_to_name(err));
+            cJSON_Delete(med_obj);
+            return err;
+        }
+        
+        // Confirmar escritura solo cuando sea necesario
+        static uint8_t write_count = 0;
+        if (++write_count >= 5) {  // Hacer commit cada 5 escrituras
+            err = nvs_commit(med_nvs_handle);
+            write_count = 0;
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Error committing to NVS: %s", esp_err_to_name(err));
+                cJSON_Delete(med_obj);
+                return err;
+            }
+        }
+        
+        cJSON_Delete(med_obj);
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "Error printing JSON, fallback to dynamic allocation");
+        // Si falla, usar el método original como fallback
+        char *json_str = cJSON_Print(med_obj);
+        cJSON_Delete(med_obj);
+        
+        if (!json_str) {
+            return ESP_ERR_NO_MEM;
+        }
+        
+        // Obtener la clave corta para el medicamento
+        const char* short_key = get_short_key(medication->id);
+        esp_err_t err = nvs_set_str(med_nvs_handle, short_key, json_str);
+        free(json_str);
+        
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error saving medication to NVS: %s", esp_err_to_name(err));
+            return err;
+        }
+        
+        err = nvs_commit(med_nvs_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error committing to NVS: %s", esp_err_to_name(err));
+            return err;
+        }
+        
+        return ESP_OK;
     }
-    
-    // Guardar en NVS
-    esp_err_t err = nvs_set_str(med_nvs_handle, medication->id, json_str);
-    free(json_str);
-    
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error saving medication to NVS: %s", esp_err_to_name(err));
-        return err;
-    }
-    
-    // Confirmar escritura
-    err = nvs_commit(med_nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error committing to NVS: %s", esp_err_to_name(err));
-        return err;
-    }
-    
-    return ESP_OK;
 }
 
 static esp_err_t save_medications_index(void) {
@@ -425,13 +646,14 @@ static esp_err_t load_medications_from_nvs(void) {
         return ESP_ERR_NO_MEM;
     }
     
-    // Cargar cada medicamento
-    int valid_meds = 0;
+    int valid_meds = 0;  // Añadir esta declaración
+    
+    // Para cada medicamento en el índice
     for (int i = 0; i < medications_count; i++) {
         char key[32];
         snprintf(key, sizeof(key), "%s%d", NVS_MED_INDEX_PREFIX, i);
         
-        // Obtener ID del medicamento
+        // Obtener ID del medicamento (será el ID largo)
         size_t required_size = 0;
         err = nvs_get_str(med_nvs_handle, key, NULL, &required_size);
         if (err != ESP_OK) {
@@ -452,9 +674,12 @@ static esp_err_t load_medications_from_nvs(void) {
             continue;
         }
         
-        // Obtener datos del medicamento
+        // Obtener la clave corta para este ID
+        const char* short_key = get_short_key(med_id);
+        
+        // Obtener datos del medicamento usando la clave corta
         required_size = 0;
-        err = nvs_get_str(med_nvs_handle, med_id, NULL, &required_size);
+        err = nvs_get_str(med_nvs_handle, short_key, NULL, &required_size);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Error getting medication data size for %s: %s", med_id, esp_err_to_name(err));
             free(med_id);
@@ -468,7 +693,7 @@ static esp_err_t load_medications_from_nvs(void) {
             continue;
         }
         
-        err = nvs_get_str(med_nvs_handle, med_id, json_str, &required_size);
+        err = nvs_get_str(med_nvs_handle, short_key, json_str, &required_size);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Error getting medication data for %s: %s", med_id, esp_err_to_name(err));
             free(med_id);
@@ -635,21 +860,33 @@ static int64_t get_current_time_ms(void) {
 static int64_t calculate_next_dispense_time(medication_schedule_t *schedule) {
     if (!schedule) return 0;
     
-    // Obtener información de tiempo actual
+    // Cachear el tiempo actual para evitar múltiples llamadas
+    static time_t last_time_check = 0;
+    static struct tm cached_timeinfo;
+    static int64_t cached_now_ms = 0;
+    static int cached_time_mins = 0;
+    static int cached_weekday = 0;
+    
     time_t now_secs;
-    struct tm timeinfo;
     time(&now_secs);
-    localtime_r(&now_secs, &timeinfo);
     
-    int64_t now_ms = get_current_time_ms();
+    // Solo recalcular si pasó al menos 1 segundo desde la última llamada
+    if (now_secs != last_time_check) {
+        last_time_check = now_secs;
+        localtime_r(&now_secs, &cached_timeinfo);
+        cached_now_ms = get_current_time_ms();
+        cached_time_mins = cached_timeinfo.tm_hour * 60 + cached_timeinfo.tm_min;
+        cached_weekday = cached_timeinfo.tm_wday == 0 ? 7 : cached_timeinfo.tm_wday;
+    }
     
-    int current_hour = timeinfo.tm_hour;
-    int current_min = timeinfo.tm_min;
-    int current_time_mins = current_hour * 60 + current_min;
+    // Usar valores cacheados
+    int64_t now_ms = cached_now_ms;
+    int current_time_mins = cached_time_mins;
+    int current_weekday = cached_weekday;
+    struct tm timeinfo = cached_timeinfo;
     
-    // Día de la semana (1-7, lunes-domingo)
-    int current_weekday = timeinfo.tm_wday == 0 ? 7 : timeinfo.tm_wday; // Convertir de 0-6 (dom-sáb) a 1-7 (lun-dom)
-    
+    // Resto de la función igual...
+
     // Si el tratamiento ha finalizado
     if (schedule->treatment_end_date > 0 && now_ms >= schedule->treatment_end_date) {
         return INT64_MAX; // No más dispensaciones
@@ -768,8 +1005,15 @@ void medication_storage_update_next_dispense_times(void) {
             // Calcular próxima dispensación
             schedule->next_dispense_time = calculate_next_dispense_time(schedule);
             
-            ESP_LOGI(TAG, "Next dispense for %s (schedule %s): %lld", 
-                    med->name, schedule->id, schedule->next_dispense_time);
+#if CONFIG_LOG_DEFAULT_LEVEL >= ESP_LOG_INFO
+            static char time_buffer[32];
+            // NO declarar la función aquí, solo usarla
+            if (esp_log_level_get(TAG) >= ESP_LOG_INFO) {
+                format_time(schedule->next_dispense_time, time_buffer, sizeof(time_buffer));
+                ESP_LOGI(TAG, "Next dispense for %s (schedule %s): %s", 
+                        med->name, schedule->id, time_buffer);
+            }
+#endif
         }
         
         // Guardar cambios en NVS
@@ -777,14 +1021,50 @@ void medication_storage_update_next_dispense_times(void) {
     }
 }
 
-// Obtener un medicamento por ID
+// Declarar la función a nivel de archivo, no dentro de un bloque
+static void format_time(int64_t timestamp_ms, char *buffer, size_t size) {
+    time_t t = timestamp_ms / 1000;
+    struct tm timeinfo;
+    localtime_r(&t, &timeinfo);
+    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", &timeinfo);
+}
+
+// Modificar medication_storage_get_medication para usar la caché
 medication_t* medication_storage_get_medication(const char* med_id) {
     if (!med_id || !medications) {
         return NULL;
     }
     
+    access_counter++;
+    
+    // Primero buscar en la caché
+    int lru_idx = -1;
+    uint32_t oldest_access = UINT32_MAX;
+    
+    for (int i = 0; i < LRU_CACHE_SIZE; i++) {
+        if (lru_cache[i].med_ptr && strcmp(lru_cache[i].id, med_id) == 0) {
+            // Encontrado en caché, actualizar tiempo de acceso
+            lru_cache[i].last_access = access_counter;
+            return lru_cache[i].med_ptr;
+        }
+        
+        // Encontrar el elemento menos usado recientemente
+        if (lru_cache[i].last_access < oldest_access) {
+            oldest_access = lru_cache[i].last_access;
+            lru_idx = i;
+        }
+    }
+    
+    // No encontrado en caché, buscar en la lista principal
     for (int i = 0; i < medications_count; i++) {
         if (strcmp(medications[i].id, med_id) == 0) {
+            // Actualizar caché con este medicamento
+            if (lru_idx >= 0) {
+                strncpy(lru_cache[lru_idx].id, med_id, MEDICATION_ID_MAX_LEN - 1);
+                lru_cache[lru_idx].id[MEDICATION_ID_MAX_LEN - 1] = '\0';
+                lru_cache[lru_idx].med_ptr = &medications[i];
+                lru_cache[lru_idx].last_access = access_counter;
+            }
             return &medications[i];
         }
     }
@@ -792,7 +1072,6 @@ medication_t* medication_storage_get_medication(const char* med_id) {
     return NULL;
 }
 
-// Obtener todos los medicamentos
 medication_t* medication_storage_get_all_medications(int* count) {
     if (!count) {
         return NULL;
@@ -802,7 +1081,6 @@ medication_t* medication_storage_get_all_medications(int* count) {
     return medications;
 }
 
-// Verificar si hay medicamentos para dispensar
 medication_t* medication_storage_check_dispense(int64_t current_time) {
     if (!medications || medications_count == 0) {
         return NULL;

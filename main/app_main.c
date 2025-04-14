@@ -22,6 +22,9 @@
 // Incluir nuestros módulos
 #include "wifi_provisioning.h"
 #include "mqtt/mqtt_app.h"
+#include "medication/medication_storage.h"
+#include "medication/medication_dispenser.h"
+#include "ntp_func.h"
 
 #define LED_GPIO_PIN_A 2
 #define LED_GPIO_PIN_B 13
@@ -35,15 +38,15 @@ static char device_ip[16]; // Para almacenar la dirección IP como string
 
 static const char *TAG = "app";
 static EventGroupHandle_t wifi_event_group = NULL;
-static bool mqtt_initialized = false;
 
 // Añadir variables de estado para el botón
 static bool wifi_failed = false;
 static int wifi_retry_count = 0;
+static bool wifi_connected = false;  // Añadir esta línea
 
 // Declarar las funciones de callback primero
-static void wifi_connected_callback(char *ip);
-static void wifi_connection_failed_callback(void);
+static void wifi_connection_callback(char *ip);
+static void wifi_failure_callback(void);
 
 // Función para configurar los LEDs
 static void configure_leds(void)
@@ -168,23 +171,29 @@ static void publish_device_status(const char* status) {
     }
 }
 
+// Modificar la función wifi_connected_callback
+
 // Callback para cuando se establece conexión WiFi
-static void wifi_connected_callback(char *ip) {
+static void wifi_connection_callback(char *ip) {
     // Guardar la IP
     strlcpy(device_ip, ip, sizeof(device_ip));
     
     // Actualizar la IP en el módulo MQTT
     mqtt_app_set_ip(ip);
     
-    // Iniciar MQTT
-    mqtt_app_start();
+    // Actualizar estado de conexión
+    wifi_connected = true;
+    wifi_failed = false;
     
+    // No iniciamos MQTT aquí, se hará en el flujo principal
     ESP_LOGI(TAG, "Conexión WiFi establecida con IP: %s", ip);
 }
 
 // Modificar el callback de WiFi para manejar fallos
-static void wifi_connection_failed_callback(void) {
+static void wifi_failure_callback(void) {
     wifi_retry_count++;
+    
+    wifi_connected = false;  // Añadir esta línea
     
     if (wifi_retry_count >= MAX_WIFI_RETRY_COUNT) {
         ESP_LOGW(TAG, "Máximo número de intentos WiFi alcanzado (%d). Esperando botón de reset.", MAX_WIFI_RETRY_COUNT);
@@ -205,53 +214,86 @@ static void wifi_connection_failed_callback(void) {
 // Modificación al app_main para crear la tarea de monitoreo del botón
 void app_main(void)
 {
-    // Configurar los LEDs antes de iniciar la conexión
-    configure_leds();
+    // Variables e inicialización
+    ESP_LOGI(TAG, "Inicializando aplicación...");
+    bool ntp_synced = false;
+
+    // 1. Inicializar WiFi y esperar conexión
+    ESP_LOGI(TAG, "Iniciando WiFi provisioning");
+    // IMPORTANTE: Mantener esta línea - inicializa el provisioning WiFi y devuelve el grupo de eventos
+    EventGroupHandle_t wifi_event_group = wifi_provisioning_init();
     
-    // Crear tarea para monitorear el botón de reset
-    xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
+    // Registrar los callbacks para notificación de conexión/fallo
+    wifi_provisioning_set_callback(wifi_connection_callback);
+    wifi_provisioning_set_failure_callback(wifi_failure_callback);
     
-    // Inicializar el módulo de WiFi Provisioning
-    wifi_event_group = wifi_provisioning_init();
-    
-    // Registrar callbacks para conexión y fallo
-    wifi_provisioning_set_callback(wifi_connected_callback);
-    wifi_provisioning_set_failure_callback(wifi_connection_failed_callback);
-    
-    // Bucle principal
-    while (1) {
-        // Si WiFi falló, no intentes esperar por conexión
-        if (!wifi_failed) {
-            // Esperar a que se establezca la conexión WiFi
-            wifi_provisioning_wait_for_connection(wifi_event_group);
-            
-            // Si llegamos aquí, tenemos conexión WiFi
-            wifi_retry_count = 0; // Resetear contador si nos conectamos
-            
-            // Bucle de heartbeat, igual que antes
-            const int HEARTBEAT_INTERVAL_MS = 10000;
-            int64_t last_heartbeat = 0;
-            
-            while (!wifi_failed) {
-                int64_t now = esp_timer_get_time() / 1000;
-                
-                if (now - last_heartbeat >= HEARTBEAT_INTERVAL_MS) {
-                    if (mqtt_app_is_connected()) {
-                        char status[64];
-                        snprintf(status, sizeof(status), 
-                                "{\"status\":\"online\",\"ip\":\"%s\",\"led\":%d}", 
-                                device_ip, current_active_led);
-                        
-                        publish_device_status(status);
-                        last_heartbeat = now;
-                    }
-                }
-                
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-            }
+    // Opcional: Esperar a que se establezca la conexión (si es necesario en el flujo)
+    // wifi_provisioning_wait_for_connection(wifi_event_group);
+
+    // 2. Sincronizar la hora con NTP (solo después de tener conexión WiFi)
+    ESP_LOGI(TAG, "Sincronizando hora por NTP");
+    bool ntp_success = sync_ntp_time("EST4");
+    if (!ntp_success) {
+        ESP_LOGW(TAG, "No se pudo sincronizar hora con NTP. Algunas funciones pueden no operar correctamente.");
+        // Intentar otra vez después de un tiempo
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        ntp_success = sync_ntp_time("EST4");
+        if (ntp_success) {
+            ntp_synced = true;
         } else {
-            // Si WiFi falló, simplemente espera - el botón manejará la reconexión
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            ESP_LOGE(TAG, "Fallo crítico en sincronización NTP después de reintentos");
         }
+    } else {
+        ntp_synced = true;
+        char time_buf[64];
+        format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+        ESP_LOGI(TAG, "Hora actual: %s", time_buf);
+    }
+    
+    // 3. Inicializar almacenamiento de medicamentos
+    ESP_LOGI(TAG, "Inicializando almacenamiento de medicamentos");
+    medication_storage_init();
+    
+    // 4. Inicializar MQTT después de tener conexión WiFi (solo una vez)
+    ESP_LOGI(TAG, "Iniciando MQTT");
+    mqtt_app_init();  // Usar esta función en lugar de mqtt_app_start()
+    
+    // 5. Inicializar dispensador de medicamentos
+    ESP_LOGI(TAG, "Inicializando dispensador de medicamentos");
+    if (ntp_synced) {
+        medication_dispenser_init();
+    } else {
+        ESP_LOGW(TAG, "Dispensador no iniciado por falta de sincronización de tiempo");
+    }
+
+    // Bucle principal con manejo de errores
+    ESP_LOGI(TAG, "Entrando en bucle principal");
+    const int HEARTBEAT_INTERVAL_MS = 10000;
+    int64_t last_heartbeat = 0;
+
+    while (1) {
+        // Obtener tiempo actual
+        int64_t now = esp_timer_get_time() / 1000;
+        
+        // Si WiFi falló, esperar a que el botón maneje la reconexión
+        if (wifi_failed) {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            continue;
+        }
+        
+        // Enviar heartbeat para mantener el estado visible
+        if (now - last_heartbeat >= HEARTBEAT_INTERVAL_MS) {
+            if (mqtt_app_is_connected()) {
+                char status[64];
+                snprintf(status, sizeof(status), 
+                        "{\"status\":\"online\",\"ip\":\"%s\",\"led\":%d}", 
+                        device_ip, current_active_led);
+                
+                mqtt_app_publish_status(status);
+                last_heartbeat = now;
+            }
+        }
+        
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }

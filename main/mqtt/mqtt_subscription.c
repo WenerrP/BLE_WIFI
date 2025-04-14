@@ -11,6 +11,9 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"      // Nuevo API de red
 #include "mqtt_client.h"    // Para esp_mqtt_client_handle_t y funciones MQTT
+#include "medication/medication_storage.h" // Incluir el encabezado de gestión de medicamentos
+#include "medication/medication_dispenser.h"
+#include "../ntp_func.h"  // Para acceder a las funciones de tiempo NTP
 
 static const char *TAG = "MQTT_SUB";
 
@@ -23,7 +26,8 @@ extern void process_led_command(char command);
 // Buffer para IP del dispositivo
 static char device_ip_buffer[16] = "0.0.0.0";
 
-// Función para obtener la IP actual (versión actualizada)
+// Reemplazar la función mqtt_sub_get_device_ip
+
 char* mqtt_sub_get_device_ip(void) {
     esp_netif_ip_info_t ip_info;
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -39,64 +43,74 @@ char* mqtt_sub_get_device_ip(void) {
     }
     
     // Convertir la IP a cadena utilizando la función de utilidad del ESP-IDF
-    esp_ip4addr_ntoa(&ip_info.ip, device_ip_buffer, sizeof(device_ip_buffer));
+    // Garantizar terminación NULL
+    esp_ip4addr_ntoa(&ip_info.ip, device_ip_buffer, sizeof(device_ip_buffer) - 1);
+    device_ip_buffer[sizeof(device_ip_buffer) - 1] = '\0';
+    
     return device_ip_buffer;
 }
 
 void process_json_command(const char* json_str) {
-    // Detección rápida de ping para respuesta inmediata
+    if (!json_str) {
+        ESP_LOGE(TAG, "JSON string is null");
+        return;
+    }
+    
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Error parsing JSON: %s", cJSON_GetErrorPtr());
+        return;
+    }
+    
+    // Validar timestamp para asegurarnos de que NTP está sincronizado
+    int64_t current_time = get_time_ms();
+    if (current_time < 1577836800000) { // 01/01/2020 como mínimo
+        ESP_LOGW(TAG, "Tiempo no sincronizado correctamente, comandos pueden ser rechazados");
+    }
+    
+    // Reemplazar la sección de detección de ping
+
 #if MQTT_USE_FAST_PING_RESPONSE
     if (strstr(json_str, "\"type\":\"ping\"") != NULL) {
         ESP_LOGI(TAG, "Ping detectado, respondiendo rápidamente");
         
-        // Extraer clientId del mensaje JSON
-        char client_id[33] = ""; // Buffer para clientId (32 caracteres máximo + null terminator)
-        const char *client_id_marker = "\"clientId\":\"";
-        char *client_id_start = strstr(json_str, client_id_marker);
-        
-        if (client_id_start) {
-            // Avanzar al inicio del valor del clientId
-            client_id_start += strlen(client_id_marker);
+        // Usar cJSON para extraer el clientId de forma más robusta
+        cJSON *ping_obj = cJSON_Parse(json_str);
+        if (ping_obj) {
+            cJSON *client_id_obj = cJSON_GetObjectItem(ping_obj, "clientId");
+            const char *client_id = "";
             
-            // Copiar hasta encontrar el cierre de comillas
-            int i = 0;
-            while (i < sizeof(client_id) - 1 && client_id_start[i] != '\"' && client_id_start[i] != '\0') {
-                client_id[i] = client_id_start[i];
-                i++;
+            if (client_id_obj && cJSON_IsString(client_id_obj)) {
+                client_id = client_id_obj->valuestring;
             }
-            client_id[i] = '\0'; // Asegurar terminación null
             
-            ESP_LOGI(TAG, "ClientID extraído: %s", client_id);
-        } else {
-            ESP_LOGW(TAG, "No se encontró clientId en el mensaje ping");
+            char pong_buffer[256];
+            snprintf(pong_buffer, sizeof(pong_buffer), 
+                    "{\"type\":\"pong\",\"status\":\"online\",\"ip\":\"%s\",\"uptime\":%llu,\"clientId\":\"%s\",\"timestamp\":%llu,\"payload\":{}}", 
+                    mqtt_sub_get_device_ip(), 
+                    esp_timer_get_time() / 1000000,
+                    client_id,
+                    esp_timer_get_time() / 1000);
+            
+            esp_mqtt_client_handle_t client = mqtt_connect_get_client();
+            if (client != NULL) {
+                ESP_LOGI(TAG, "Enviando pong al tópico: %s", MQTT_TOPIC_DEVICE_STATUS);
+                int msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, pong_buffer, 0, 0, false);
+                if (msg_id >= 0) {
+                    ESP_LOGI(TAG, "Respuesta pong enviada correctamente, msg_id=%d", msg_id);
+                } else {
+                    ESP_LOGW(TAG, "Error enviando respuesta pong");
+                }
+            }
+            
+            cJSON_Delete(ping_obj);
         }
         
-        // Crear una respuesta pong mínima pero informativa
-        char pong_buffer[256]; // Aumentado para acomodar clientId
-        snprintf(pong_buffer, sizeof(pong_buffer), 
-                "{\"type\":\"pong\",\"status\":\"online\",\"ip\":\"%s\",\"uptime\":%llu,\"clientId\":\"%s\",\"timestamp\":%llu,\"payload\":{}}", 
-                mqtt_sub_get_device_ip(), 
-                esp_timer_get_time() / 1000000,
-                client_id,
-                esp_timer_get_time() / 1000);
-        
-        esp_mqtt_client_handle_t client = mqtt_connect_get_client();
-        if (client != NULL) {
-            ESP_LOGI(TAG, "Enviando pong al tópico: %s", MQTT_TOPIC_DEVICE_STATUS);
-            int msg_id = esp_mqtt_client_publish(client, MQTT_TOPIC_DEVICE_STATUS, pong_buffer, 0, 0, false);
-            if (msg_id >= 0) {
-                ESP_LOGI(TAG, "Respuesta pong enviada correctamente, msg_id=%d", msg_id);
-            } else {
-                ESP_LOGW(TAG, "Error enviando respuesta pong");
-            }
-        }
-        
-        // Aún procesamos el JSON para otros posibles comandos
+        // Continuamos con el procesamiento normal por si hay más comandos
     }
 #endif
 
     // Procesamiento JSON normal
-    cJSON *root = cJSON_Parse(json_str);
     if (!root) {
         ESP_LOGE(TAG, "Error al analizar JSON: %s", json_str);
         return;
@@ -182,6 +196,32 @@ void process_json_command(const char* json_str) {
             else if (strcmp(cmd->valuestring, "led_c") == 0) {
                 process_led_command('C');
             }
+            // NUEVO: Procesamiento de comando de sincronización de medicamentos
+            else if (strcmp(cmd->valuestring, "syncSchedules") == 0) {
+                ESP_LOGI(TAG, "Procesando sincronización de medicamentos");
+                
+                // Obtener timestamp original si existe
+                int64_t timestamp = 0;
+                cJSON *ts = cJSON_GetObjectItem(root, "timestamp");
+                if (ts && cJSON_IsNumber(ts)) {
+                    timestamp = (int64_t)ts->valuedouble;
+                }
+                
+                // Procesar el JSON de medicamentos
+                esp_err_t result = medication_storage_process_json(json_str);
+                
+                // Enviar confirmación según resultado
+                if (result == ESP_OK) {
+                    mqtt_app_publish_med_confirmation(true, 
+                        "Sincronización de medicamentos completada con éxito", 
+                        timestamp);
+                } else {
+                    char error_msg[100];
+                    snprintf(error_msg, sizeof(error_msg), 
+                        "Error al procesar medicamentos: %s", esp_err_to_name(result));
+                    mqtt_app_publish_med_confirmation(false, error_msg, timestamp);
+                }
+            }
             else if (strcmp(cmd->valuestring, "get_telemetry") == 0) {
                 // Solicitud de telemetría bajo demanda
                 cJSON *telemetry = cJSON_CreateObject();
@@ -189,6 +229,41 @@ void process_json_command(const char* json_str) {
                 cJSON_AddNumberToObject(telemetry, "free_heap", esp_get_free_heap_size());
                 cJSON_AddNumberToObject(telemetry, "active_led", mqtt_app_get_active_led());
                 mqtt_pub_telemetry(telemetry);
+            }
+            else if (strcmp(cmd->valuestring, "dispense_medication") == 0) {
+                // Comando para dispensar manualmente un medicamento
+                cJSON *med_id = cJSON_GetObjectItem(payload, "medication_id");
+                cJSON *sched_id = cJSON_GetObjectItem(payload, "schedule_id");
+                
+                if (med_id && cJSON_IsString(med_id) && sched_id && cJSON_IsString(sched_id)) {
+                    ESP_LOGI(TAG, "Dispensando medicamento %s (schedule %s) manualmente", 
+                            med_id->valuestring, sched_id->valuestring);
+                    
+                    // Llamar a la función de dispensación manual
+                    esp_err_t result = medication_dispenser_manual_dispense(med_id->valuestring, sched_id->valuestring);
+                    
+                    // Enviar confirmación
+                    if (result == ESP_OK) {
+                        mqtt_app_publish_med_confirmation(true, "Medicamento dispensado manualmente", 0);
+                    } else {
+                        mqtt_app_publish_med_confirmation(false, "Error al dispensar medicamento", 0);
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Faltan parámetros para dispensar medicamento");
+                }
+            }
+            else if (strcmp(cmd->valuestring, "set_auto_dispense") == 0) {
+                // Comando para configurar dispensación automática
+                cJSON *enabled = cJSON_GetObjectItem(payload, "enabled");
+                
+                if (enabled && cJSON_IsBool(enabled)) {
+                    bool auto_enabled = cJSON_IsTrue(enabled);
+                    medication_dispenser_set_auto_dispense(auto_enabled);
+                    mqtt_app_publish_med_confirmation(true, 
+                        auto_enabled ? "Dispensación automática activada" : "Dispensación automática desactivada", 0);
+                } else {
+                    ESP_LOGW(TAG, "Parámetro inválido para set_auto_dispense");
+                }
             }
             else {
                 ESP_LOGW(TAG, "Comando desconocido: %s", cmd->valuestring);
