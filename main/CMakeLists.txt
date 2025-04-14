@@ -25,3 +25,16 @@ idf_component_register(
         mqtt
         lwip 
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE 
+    -Os                          # Optimize for size
+    -fno-jump-tables             # No jump tables
+    -fno-tree-switch-conversion  # No switch conversion
+    -ffunction-sections          # Put each function in separate section
+    -fdata-sections              # Put each data item in separate section
+    -mno-text-section-literals   # Place literals in flash instead of IRAM
+)
+
+target_link_options(${COMPONENT_LIB} PRIVATE 
+    -Wl,--gc-sections            # Remove unused sections
+)
