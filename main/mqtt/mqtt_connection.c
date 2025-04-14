@@ -32,6 +32,9 @@ extern void process_json_command(const char* json_str);
 
 // Declaraciones adelantadas para las funciones privadas
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
+
+// Declaración de la función mqtt_send_medication_confirmation
+void mqtt_send_medication_confirmation(const char* medication_id);
 static void mqtt_reconnect_timer_callback(void* arg);
 static uint32_t exponential_backoff(uint8_t retry_count);
 static void handle_mqtt_error(esp_mqtt_event_handle_t event);

@@ -6,7 +6,7 @@ idf_component_register(
         "mqtt/mqtt_connection.c"
         "mqtt/mqtt_publication.c"
         "mqtt/mqtt_subscription.c"
-        "medication_storage.c"
+        "medication/medication_storage.c"
     INCLUDE_DIRS 
         "."
         "mqtt"
