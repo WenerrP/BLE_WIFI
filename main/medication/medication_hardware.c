@@ -292,13 +292,7 @@ esp_err_t medication_hardware_pump_stop(void) {
     return ESP_OK;
 }
 
-typedef enum {
-    SENSOR_ERROR = -1,
-    OBJECT_NOT_PRESENT = 0,
-    OBJECT_PRESENT = 1
-} sensor_state_t;
-
-bool medication_hardware_check_pill_presence(void) {
+sensor_state_t medication_hardware_check_pill_presence(void) {
     float distance = measure_distance(ULTRASONIC_PILL_TRIGGER, ULTRASONIC_PILL_ECHO);
     
     if (distance < 0) {
@@ -313,22 +307,84 @@ bool medication_hardware_check_pill_presence(void) {
     return state;
 }
 
-// Verificar si hay líquido debajo del dispensador
-bool medication_hardware_check_liquid_presence(void) {
+sensor_state_t medication_hardware_check_liquid_presence(void) {
     float distance = measure_distance(ULTRASONIC_LIQ_TRIGGER, ULTRASONIC_LIQ_ECHO);
     
-    // Verificar si la medición es válida
     if (distance < 0) {
         ESP_LOGW(TAG, "Error midiendo distancia en sensor de líquido");
-        return false;
+        return SENSOR_ERROR;
     }
     
-    // Si la distancia es menor a 10cm, consideramos que hay un recipiente presente
-    bool liquid_container_present = (distance < 10.0);
+    sensor_state_t state = (distance < 10.0) ? OBJECT_PRESENT : OBJECT_NOT_PRESENT;
     ESP_LOGI(TAG, "Distancia sensor líquido: %.2f cm - Recipiente %s", 
-             distance, liquid_container_present ? "detectado" : "no detectado");
+             distance, (state == OBJECT_PRESENT) ? "detectado" : "no detectado");
     
-    return liquid_container_present;
+    return state;
+}
+
+esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liquid, uint32_t amount) {
+    esp_err_t result = ESP_OK;
+    
+    if (!hardware_initialized) {
+        ESP_LOGE(TAG, "Hardware no inicializado");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (compartment_number < 1 || compartment_number > 4) {
+        ESP_LOGE(TAG, "Número de compartimento inválido: %d", compartment_number);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Si es líquido, debe ser el compartimento 4
+    if (is_liquid) {
+        if (compartment_number != LIQUID_COMPARTMENT_NUM) {
+            ESP_LOGE(TAG, "El medicamento líquido solo puede dispensarse del compartimento 4");
+            return ESP_ERR_INVALID_ARG;
+        }
+        
+        // Verificar si hay un recipiente para el líquido
+        if (medication_hardware_check_liquid_presence() != OBJECT_PRESENT) {
+            ESP_LOGW(TAG, "No se detecta recipiente para líquido. Abortando dispensación.");
+            return ESP_ERR_INVALID_STATE;
+        }
+        
+        // Activar la bomba por la cantidad especificada (en milisegundos)
+        ESP_LOGI(TAG, "Dispensando medicamento líquido por %lu ms", (unsigned long)amount);
+        result = medication_hardware_pump_start(PUMP_DUTY_CYCLE_MAX, amount);
+        
+    } else {
+        // Es píldora, debe estar en los compartimentos 1-3
+        if (compartment_number > MAX_PILL_COMPARTMENTS) {
+            ESP_LOGE(TAG, "Las píldoras solo pueden dispensarse de los compartimentos 1-3");
+            return ESP_ERR_INVALID_ARG;
+        }
+        
+        // Verificar si hay un recipiente para las píldoras
+        if (medication_hardware_check_pill_presence() != OBJECT_PRESENT) {
+            ESP_LOGW(TAG, "No se detecta recipiente para píldoras. Abortando dispensación.");
+            return ESP_ERR_INVALID_STATE;
+        }
+        
+        // Abrir el compartimento de píldoras
+        ESP_LOGI(TAG, "Dispensando %lu píldoras del compartimento %d", (unsigned long)amount, compartment_number);
+        
+        // Abrir el compartimento
+        result = medication_hardware_open_compartment(compartment_number);
+        if (result != ESP_OK) {
+            return result;
+        }
+        
+        // Mantener abierto un tiempo proporcional a la cantidad de píldoras
+        // Asumimos 500ms base + 250ms por cada píldora adicional
+        uint32_t open_time = 500 + (amount > 1 ? (amount - 1) * 250 : 0);
+        ESP_LOGI(TAG, "Manteniendo compartimento abierto por %lu ms", (unsigned long)open_time);
+        vTaskDelay(pdMS_TO_TICKS(open_time));
+        
+        // Cerrar el compartimento
+        result = medication_hardware_close_compartment(compartment_number);
+    }
+    
+    return result;
 }
 
 // Liberar recursos del hardware

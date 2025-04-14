@@ -11,6 +11,7 @@
 #include "medication_dispenser.h"
 #include "../mqtt/mqtt_app.h"
 #include "../ntp_func.h" // Para acceder a las funciones de tiempo NTP
+#include "medication_hardware.h"  // Añadir esta línea al inicio
 
 static const char *TAG = "MED_DISPENSER";
 static TaskHandle_t dispenser_task_handle = NULL;
@@ -34,6 +35,65 @@ static bool is_time_reliable(void) {
     return (timeinfo.tm_year >= (2022 - 1900));
 }
 
+// Añadir esta función para dispensar físicamente un medicamento
+bool dispensar_medicamento_fisicamente(medication_t *medication) {
+    if (!medication) {
+        ESP_LOGE(TAG, "Medicamento inválido");
+        return false;
+    }
+    
+    ESP_LOGI(TAG, "Dispensando medicamento físicamente: %s (compartimento %d)",
+             medication->name, medication->compartment);
+    
+    bool is_liquid = (strcmp(medication->type, COMPARTMENT_TYPE_LIQUID) == 0);
+    bool success = false;
+    
+    // Comprobar que el compartimento es válido
+    if (medication->compartment < 1 || 
+        (is_liquid && medication->compartment != LIQUID_COMPARTMENT_NUM) || 
+        (!is_liquid && medication->compartment > MAX_PILL_COMPARTMENTS)) {
+        
+        ESP_LOGE(TAG, "Compartimento inválido para tipo de medicamento: %d", medication->compartment);
+        return false;
+    }
+    
+    // Preparar parámetros para la dispensación
+    uint32_t amount;
+    if (is_liquid) {
+        // Para líquidos, calculamos un tiempo en ms basado en dosis
+        // Ej: 500ms por cada unidad de dosis
+        amount = medication->pills_per_dose * 500;
+        if (amount < 500) amount = 500;  // mínimo 500ms
+        if (amount > 5000) amount = 5000;  // máximo 5 segundos
+    } else {
+        // Para píldoras, usamos la cantidad de píldoras por dosis
+        amount = medication->pills_per_dose;
+        if (amount < 1) amount = 1;  // mínimo 1 píldora
+    }
+    
+    // Intentar dispensar el medicamento
+    esp_err_t result = medication_hardware_dispense(medication->compartment, is_liquid, amount);
+    
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "✅ Medicamento dispensado físicamente con éxito");
+        success = true;
+    } else {
+        switch (result) {
+            case ESP_ERR_INVALID_STATE:
+                ESP_LOGW(TAG, "❌ No se detecta recipiente para recibir el medicamento");
+                break;
+            case ESP_ERR_INVALID_ARG:
+                ESP_LOGE(TAG, "❌ Parámetros inválidos para dispensar");
+                break;
+            default:
+                ESP_LOGE(TAG, "❌ Error al dispensar medicamento: %s", esp_err_to_name(result));
+                break;
+        }
+    }
+    
+    return success;
+}
+
 // Inicializa el sistema de dispensación de medicamentos
 esp_err_t medication_dispenser_init(void) {
     if (dispenser_initialized) {
@@ -42,6 +102,13 @@ esp_err_t medication_dispenser_init(void) {
     }
 
     ESP_LOGI(TAG, "Inicializando dispensador de medicamentos");
+
+    // Inicializar el hardware de dispensación
+    esp_err_t hw_init = medication_hardware_init();
+    if (hw_init != ESP_OK) {
+        ESP_LOGE(TAG, "Error al inicializar hardware de dispensación: %s", esp_err_to_name(hw_init));
+        return hw_init;
+    }
 
     // Crear la tarea de dispensación
     BaseType_t task_created = xTaskCreate(
@@ -54,6 +121,7 @@ esp_err_t medication_dispenser_init(void) {
         
     if (task_created != pdPASS) {
         ESP_LOGE(TAG, "Error al crear la tarea del dispensador");
+        medication_hardware_deinit();
         return ESP_FAIL;
     }
 
@@ -68,6 +136,7 @@ esp_err_t medication_dispenser_init(void) {
         ESP_LOGE(TAG, "Error al crear el timer de comprobación: %s", esp_err_to_name(ret));
         vTaskDelete(dispenser_task_handle);
         dispenser_task_handle = NULL;
+        medication_hardware_deinit();
         return ret;
     }
     
@@ -79,6 +148,7 @@ esp_err_t medication_dispenser_init(void) {
         check_timer = NULL;
         vTaskDelete(dispenser_task_handle);
         dispenser_task_handle = NULL;
+        medication_hardware_deinit();
         return ret;
     }
 
@@ -106,6 +176,9 @@ void medication_dispenser_deinit(void) {
         vTaskDelete(dispenser_task_handle);
         dispenser_task_handle = NULL;
     }
+    
+    // Deinicializar el hardware
+    medication_hardware_deinit();
     
     dispenser_initialized = false;
     ESP_LOGI(TAG, "Dispensador detenido");
@@ -202,6 +275,14 @@ esp_err_t medication_dispenser_manual_dispense(const char* medication_id, const 
         ESP_LOGW(TAG, "Horario no encontrado para medicamento %s: %s", 
                 medication_id, schedule_id);
         return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Dispensar físicamente el medicamento
+    bool dispensed = dispensar_medicamento_fisicamente(med);
+    if (!dispensed) {
+        ESP_LOGW(TAG, "Error en dispensación física del medicamento %s", med->name);
+        // Opcionalmente puedes decidir no continuar, pero aquí continuamos para actualizar el estado
+        // return ESP_FAIL;
     }
     
     // Marcar como dispensado en el almacenamiento
@@ -320,6 +401,16 @@ static void medication_dispenser_task(void *pvParameters) {
                 // Si está habilitada la dispensación automática, marcar como dispensado
                 if (auto_dispense_enabled) {
                     ESP_LOGI(TAG, "Dispensando automáticamente medicamento: %s", medication->name);
+                    
+                    // Añadir esta sección para dispensar físicamente:
+                    bool dispensed = dispensar_medicamento_fisicamente(medication);
+                    if (!dispensed) {
+                        ESP_LOGW(TAG, "❌ Error en dispensación física del medicamento");
+                        // Opcionalmente, puedes decidir no marcar como dispensado si falla la dispensación física
+                    } else {
+                        ESP_LOGI(TAG, "✅ Medicamento dispensado físicamente con éxito");
+                    }
+                    
                     esp_err_t result = medication_storage_mark_dispensed(medication->id, active_schedule->id);
                     
                     if (result == ESP_OK) {
