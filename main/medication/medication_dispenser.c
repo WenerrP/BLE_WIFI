@@ -119,9 +119,12 @@ void medication_dispenser_set_auto_dispense(bool enable) {
 
 // Callback del timer para verificar medicamentos
 static void check_timer_callback(void* arg) {
+    ESP_LOGI(TAG, "Timer de verificación activado, notificando a la tarea del dispensador");
     // Enviar una notificación a la tarea para que verifique los medicamentos
     if (dispenser_task_handle != NULL) {
         xTaskNotifyGive(dispenser_task_handle);
+    } else {
+        ESP_LOGW(TAG, "La tarea del dispensador no está disponible");
     }
 }
 
@@ -227,12 +230,23 @@ static void medication_dispenser_task(void *pvParameters) {
             continue;
         }
         
+        // Log para saber que estamos esperando notificación
+        ESP_LOGI(TAG, "Esperando notificación del timer o timeout...");
+        
         // Esperar notificación del timer o timeout
         uint32_t notification_value = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000)); // 1 minuto máximo
+        
+        if (notification_value > 0) {
+            ESP_LOGI(TAG, "Notificación recibida, verificando medicamentos...");
+        } else {
+            ESP_LOGI(TAG, "Timeout alcanzado, verificando medicamentos de todas formas");
+        }
         
         // Obtener si hay medicamentos para optimizar el tiempo de espera
         int count;
         medication_t *meds = medication_storage_get_all_medications(&count);
+        
+        ESP_LOGI(TAG, "Total de medicamentos encontrados: %d", count);
         
         if (count == 0) {
             // No hay medicamentos, esperar más tiempo para ahorrar energía
@@ -241,15 +255,33 @@ static void medication_dispenser_task(void *pvParameters) {
             continue;
         }
         
+        // Mostrar información de todos los medicamentos y sus horarios
+        for (int i = 0; i < count; i++) {
+            ESP_LOGI(TAG, "Medicamento %d: %s (compartimento %d)", i+1, meds[i].name, meds[i].compartment);
+            
+            for (int j = 0; j < meds[i].schedules_count; j++) {
+                char time_str[32];
+                format_time(meds[i].schedules[j].next_dispense_time, time_str, sizeof(time_str));
+                ESP_LOGI(TAG, "  - Horario %s: próxima dispensación en %s", 
+                         meds[i].schedules[j].id, time_str);
+            }
+        }
+        
         // Obtener el tiempo actual
         int64_t current_time = get_time_ms(); // Usar la función del módulo NTP
         
+        // Convertir a formato legible y mostrar
+        char current_time_str[32];
+        format_time(current_time, current_time_str, sizeof(current_time_str));
+        ESP_LOGI(TAG, "Tiempo actual: %s", current_time_str);
+        
         // Verificar si hay medicamentos para dispensar
+        ESP_LOGI(TAG, "Verificando medicamentos para dispensar...");
         medication_t *medication = medication_storage_check_dispense(current_time);
         
         if (medication != NULL) {
             // Encontramos un medicamento para dispensar
-            ESP_LOGI(TAG, "Medicamento listo para dispensar: %s (compartimento %d)",
+            ESP_LOGI(TAG, "¡Medicamento listo para dispensar: %s (compartimento %d)!",
                     medication->name, medication->compartment);
             
             // Buscar el horario correspondiente (el más cercano a dispensar)
@@ -259,25 +291,52 @@ static void medication_dispenser_task(void *pvParameters) {
             for (int i = 0; i < medication->schedules_count; i++) {
                 medication_schedule_t *schedule = &medication->schedules[i];
                 
+                // Convertir a formato legible
+                char next_time_str[32];
+                char last_time_str[32];
+                format_time(schedule->next_dispense_time, next_time_str, sizeof(next_time_str));
+                format_time(schedule->last_dispensed_time, last_time_str, sizeof(last_time_str));
+                
+                ESP_LOGI(TAG, "  - Horario %s: próxima=%s, última=%s", 
+                        schedule->id, next_time_str, last_time_str);
+                
                 // Verificar si este es el horario que acaba de ser marcado para dispensación
                 if (schedule->next_dispense_time > schedule->last_dispensed_time &&
                     schedule->next_dispense_time <= current_time &&
                     schedule->next_dispense_time < nearest_time) {
                     active_schedule = schedule;
                     nearest_time = schedule->next_dispense_time;
+                    ESP_LOGI(TAG, "    * Horario seleccionado para dispensación");
                 }
             }
             
             if (active_schedule) {
+                ESP_LOGI(TAG, "Preparando notificación para medicamento %s (horario %s)",
+                        medication->name, active_schedule->id);
+                
                 // Enviar notificación MQTT
                 publish_med_notification(medication, active_schedule);
                 
                 // Si está habilitada la dispensación automática, marcar como dispensado
                 if (auto_dispense_enabled) {
                     ESP_LOGI(TAG, "Dispensando automáticamente medicamento: %s", medication->name);
-                    medication_storage_mark_dispensed(medication->id, active_schedule->id);
+                    esp_err_t result = medication_storage_mark_dispensed(medication->id, active_schedule->id);
+                    
+                    if (result == ESP_OK) {
+                        ESP_LOGI(TAG, "✅ Medicamento dispensado correctamente");
+                    } else {
+                        ESP_LOGW(TAG, "❌ Error al marcar medicamento como dispensado: %s", esp_err_to_name(result));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "⚠️ Dispensación automática desactivada, esperando confirmación manual");
                 }
+            } else {
+                ESP_LOGW(TAG, "No se encontró ningún horario activo para dispensar");
             }
+        } else {
+            ESP_LOGI(TAG, "No hay medicamentos listos para dispensar en este momento");
         }
+        
+        ESP_LOGI(TAG, "Ciclo de verificación completado, esperando próxima notificación");
     }
 }

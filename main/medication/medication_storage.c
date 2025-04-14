@@ -9,6 +9,7 @@
 #include "cJSON.h"
 #include "esp_system.h"
 #include "medication_storage.h"
+#include "../ntp_func.h"  // Para acceder a format_time()
 
 // Define the maximum length for medication ID
 #define MEDICATION_ID_MAX_LEN 64
@@ -41,8 +42,6 @@ static esp_err_t load_medications_from_nvs(void);
 static esp_err_t save_medications_index(void);
 static int64_t calculate_next_dispense_time(medication_schedule_t *schedule);
 static int64_t get_current_time_ms(void);
-// Añadir esta línea:
-static void format_time(int64_t timestamp_ms, char *buffer, size_t size);
 
 // Añadir estas funciones a tu archivo
 
@@ -1021,14 +1020,6 @@ void medication_storage_update_next_dispense_times(void) {
     }
 }
 
-// Declarar la función a nivel de archivo, no dentro de un bloque
-static void format_time(int64_t timestamp_ms, char *buffer, size_t size) {
-    time_t t = timestamp_ms / 1000;
-    struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
-    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", &timeinfo);
-}
-
 // Modificar medication_storage_get_medication para usar la caché
 medication_t* medication_storage_get_medication(const char* med_id) {
     if (!med_id || !medications) {
@@ -1083,8 +1074,13 @@ medication_t* medication_storage_get_all_medications(int* count) {
 
 medication_t* medication_storage_check_dispense(int64_t current_time) {
     if (!medications || medications_count == 0) {
+        ESP_LOGW(TAG, "No hay medicamentos registrados para verificar dispensación");
         return NULL;
     }
+    
+    char current_time_str[32];
+    format_time(current_time, current_time_str, sizeof(current_time_str));
+    ESP_LOGI(TAG, "Verificando dispensación a las %s", current_time_str);
     
     medication_t *next_med = NULL;
     int64_t soonest_time = INT64_MAX;
@@ -1094,17 +1090,35 @@ medication_t* medication_storage_check_dispense(int64_t current_time) {
     for (int i = 0; i < medications_count; i++) {
         medication_t *med = &medications[i];
         
+        ESP_LOGI(TAG, "Revisando medicamento: %s (%d horarios)", med->name, med->schedules_count);
+        
         for (int j = 0; j < med->schedules_count; j++) {
             medication_schedule_t *schedule = &med->schedules[j];
+            
+            char next_time_str[32];
+            format_time(schedule->next_dispense_time, next_time_str, sizeof(next_time_str));
+            
+            ESP_LOGI(TAG, "  - Horario %s: próxima dispensación %s", 
+                    schedule->id, next_time_str);
             
             // Si está programado para dispensar y es el más cercano
             if (schedule->next_dispense_time > 0 && 
                 schedule->next_dispense_time <= current_time &&
                 schedule->next_dispense_time < soonest_time) {
                 
+                ESP_LOGI(TAG, "    ✓ Horario elegible para dispensación");
                 next_med = med;
                 soonest_time = schedule->next_dispense_time;
                 soonest_sched_idx = j;
+            } else {
+                if (schedule->next_dispense_time <= 0) {
+                    ESP_LOGI(TAG, "    ✗ Horario no programado (next_dispense_time <= 0)");
+                } else if (schedule->next_dispense_time > current_time) {
+                    ESP_LOGI(TAG, "    ✗ Horario programado para el futuro (%lld ms después)", 
+                            schedule->next_dispense_time - current_time);
+                } else {
+                    ESP_LOGI(TAG, "    ✗ No es el horario más cercano");
+                }
             }
         }
     }
@@ -1121,20 +1135,26 @@ medication_t* medication_storage_check_dispense(int64_t current_time) {
             if (next_med->total_pills < 0) {
                 next_med->total_pills = 0;
             }
+            ESP_LOGI(TAG, "Actualizado recuento de pastillas: %d restantes", next_med->total_pills);
         }
         
         // Recalcular próximo tiempo de dispensación
         schedule->next_dispense_time = calculate_next_dispense_time(schedule);
         
+        char next_time_str[32];
+        format_time(schedule->next_dispense_time, next_time_str, sizeof(next_time_str));
+        ESP_LOGI(TAG, "Próxima dispensación programada para: %s", next_time_str);
+        
         // Guardar cambios
         save_medication_to_nvs(next_med);
         
-        ESP_LOGI(TAG, "Medication %s ready to dispense from compartment %d", 
+        ESP_LOGI(TAG, "✅ Medicamento %s listo para dispensar desde compartimento %d", 
                 next_med->name, next_med->compartment);
         
         return next_med;
     }
     
+    ESP_LOGI(TAG, "No se encontró ningún medicamento para dispensar ahora");
     return NULL;
 }
 

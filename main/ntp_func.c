@@ -12,6 +12,13 @@
 #include "esp_netif.h"
 #include "nvs_flash.h"
 #include "lwip/apps/sntp.h"
+// Añadir estos nuevos includes:
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include "lwip/netdb.h"
+#include "lwip/dns.h"
+#include <errno.h>
 
 static const char *TAG = "NTP";
 static EventGroupHandle_t s_wifi_event_group;
@@ -85,6 +92,14 @@ bool sync_ntp_time(const char *timezone)
 
     ESP_LOGI(TAG, "Inicializando NTP...");
     
+    // Primero verificar conexión WiFi
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK) {
+        ESP_LOGE(TAG, "No hay conexión WiFi activa");
+        return false;
+    }
+    ESP_LOGI(TAG, "WiFi conectado a SSID: %s, RSSI: %d", ap_info.ssid, ap_info.rssi);
+    
     // Si SNTP ya fue inicializado, detenerlo primero
     if (sntp_initialized) {
         ESP_LOGI(TAG, "SNTP ya inicializado, deteniendo primero...");
@@ -93,11 +108,17 @@ bool sync_ntp_time(const char *timezone)
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
     
-    // Inicializar SNTP
+    // Inicializar SNTP con más opciones y diagnóstico
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org"); // Servidor NTP principal
-    sntp_setservername(1, "time.google.com"); // Servidor NTP alternativo
+    ESP_LOGI(TAG, "Configurando servidores NTP...");
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_setservername(1, "time.google.com");
+    sntp_setservername(2, "time.cloudflare.com");
+    // Opcional: Habilitar logging de SNTP (si está disponible en la configuración)
+    // sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    
     sntp_init();
+    ESP_LOGI(TAG, "SNTP inicializado, esperando respuesta de servidores");
     
     // Marcar como inicializado
     sntp_initialized = true;
@@ -111,7 +132,7 @@ bool sync_ntp_time(const char *timezone)
     }
     tzset();
 
-    // Esperar sincronización
+    // Esperar sincronización con mejor diagnóstico
     time_t now = 0;
     struct tm timeinfo = {0};
     int retry = 0;
@@ -120,6 +141,26 @@ bool sync_ntp_time(const char *timezone)
     while (timeinfo.tm_year < (2022 - 1900) && ++retry < retry_count)
     {
         ESP_LOGI(TAG, "Esperando sincronización NTP... (%d/%d)", retry, retry_count);
+        
+        // Si es el 5to o 10mo intento, mostrar más diagnóstico
+        if (retry == 5 || retry == 10) {
+            // Reemplazar el código de tcpip_adapter por esp_netif
+            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            if (netif) {
+                esp_netif_ip_info_t ip_info;
+                if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                    ESP_LOGI(TAG, "Diagnóstico - IP: " IPSTR ", GW: " IPSTR,
+                            IP2STR(&ip_info.ip), IP2STR(&ip_info.gw));
+                }
+            }
+            
+            for (int i = 0; i < 3; i++) {
+                if (sntp_getservername(i)) {
+                    ESP_LOGI(TAG, "Servidor NTP %d: %s", i, sntp_getservername(i));
+                }
+            }
+        }
+        
         vTaskDelay(1000 / portTICK_PERIOD_MS);
         time(&now);
         localtime_r(&now, &timeinfo);
@@ -127,7 +168,7 @@ bool sync_ntp_time(const char *timezone)
 
     if (retry == retry_count)
     {
-        ESP_LOGE(TAG, "Fallo al sincronizar NTP.");
+        ESP_LOGE(TAG, "Fallo al sincronizar NTP. Verifique conexión a Internet y/o firewalls.");
         return false;
     }
 
@@ -162,6 +203,50 @@ void format_current_time(char *buffer, size_t buffer_size, const char *format)
     time(&now);
     localtime_r(&now, &timeinfo);
     strftime(buffer, buffer_size, format, &timeinfo);
+}
+
+// Añadir esta implementación (al final del archivo, antes de ntp_init):
+void format_time(int64_t timestamp_ms, char *buffer, size_t size) {
+    time_t t = timestamp_ms / 1000;
+    struct tm timeinfo;
+    localtime_r(&t, &timeinfo);
+    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", &timeinfo);
+}
+
+// Añadir esta función después de format_time y antes de ntp_init
+bool test_internet_connectivity(void) {
+    // Crear un socket
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Error al crear socket: errno %d", errno);
+        return false;
+    }
+    
+    // Configurar dirección de Google DNS (8.8.8.8:53)
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_addr.s_addr = inet_addr("8.8.8.8");
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(53);
+    
+    // Configurar timeout del socket
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    
+    // Intentar conectar
+    int err = connect(sock, (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+    if (err != 0) {
+        ESP_LOGE(TAG, "Error de conexión a Google DNS: errno %d", errno);
+        close(sock);
+        return false;
+    }
+    
+    // Conexión exitosa
+    ESP_LOGI(TAG, "Conexión a Internet verificada (alcance a 8.8.8.8:53)");
+    close(sock);
+    return true;
 }
 
 // Ejemplo de función inicializadora para ser llamada desde app_main

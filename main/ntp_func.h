@@ -46,6 +46,15 @@ time_t get_time_sec(void);
 void format_current_time(char *buffer, size_t buffer_size, const char *format);
 
 /**
+ * @brief Formatea un timestamp en milisegundos a una cadena de texto legible
+ * 
+ * @param timestamp_ms Tiempo en milisegundos desde epoch
+ * @param buffer Buffer donde se escribirá la cadena formateada
+ * @param size Tamaño del buffer
+ */
+void format_time(int64_t timestamp_ms, char *buffer, size_t size);
+
+/**
  * @brief Función de inicialización completa (WiFi + NTP)
  * 
  * @param ssid Nombre de la red WiFi
