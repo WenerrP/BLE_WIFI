@@ -7,12 +7,13 @@ idf_component_register(
         "mqtt/mqtt_publication.c"
         "mqtt/mqtt_subscription.c"
         "medication/medication_storage.c"
-        "medication/medication_dispenser.c"  # Corregida la ubicación
+        "medication/medication_dispenser.c" 
+        "medication/medication_hardware.c"
         "ntp_func.c"
     INCLUDE_DIRS 
         "."
         "mqtt"
-        "medication"  # Añadido directorio de medicamentos para los includes
+        "medication" 
     REQUIRES 
         nvs_flash 
         esp_wifi 
@@ -22,5 +23,5 @@ idf_component_register(
         json 
         driver
         mqtt
-        lwip  # Añadido para sntp (parte de lwip)
+        lwip 
 )
