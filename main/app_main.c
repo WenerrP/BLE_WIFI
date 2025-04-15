@@ -17,7 +17,7 @@
 #include <esp_log.h>
 #include <driver/gpio.h>
 #include <esp_timer.h>
-#include <esp_wifi.h>  // Para esp_wifi_stop()
+#include <esp_wifi.h> 
 
 // Incluir nuestros módulos
 #include "wifi_provisioning.h"
