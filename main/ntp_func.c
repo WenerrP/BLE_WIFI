@@ -249,6 +249,142 @@ bool test_internet_connectivity(void) {
     return true;
 }
 
+// Añadir después de test_internet_connectivity()
+
+/**
+ * @brief Intenta sincronizar el tiempo con múltiples intentos
+ * 
+ * @param timezone Zona horaria
+ * @param max_attempts Número máximo de intentos
+ * @return true si la sincronización fue exitosa
+ */
+bool sync_ntp_time_with_retry(const char *timezone, int max_attempts) {
+    ESP_LOGI(TAG, "Iniciando sincronización NTP con %d intentos", max_attempts);
+    
+    for (int attempt = 1; attempt <= max_attempts; attempt++) {
+        ESP_LOGI(TAG, "Intento de sincronización NTP %d de %d", attempt, max_attempts);
+        
+        // Verificar conectividad a Internet antes de intentar
+        if (attempt > 1) {  // Saltamos la primera vez para no retrasar el inicio
+            if (!test_internet_connectivity()) {
+                ESP_LOGW(TAG, "Sin conexión a Internet en intento %d. Esperando...", attempt);
+                vTaskDelay(2000 / portTICK_PERIOD_MS);
+                continue;
+            }
+        }
+        
+        // Intentar sincronizar
+        if (sync_ntp_time(timezone)) {
+            ESP_LOGI(TAG, "Sincronización NTP exitosa en intento %d", attempt);
+            return true;
+        }
+        
+        // Esperar antes del siguiente intento
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
+    }
+    
+    ESP_LOGW(TAG, "Todos los intentos de sincronización NTP fallaron");
+    return false;
+}
+
+/**
+ * @brief Establece una fecha/hora por defecto cuando NTP falla
+ * 
+ * @param timezone Zona horaria a configurar
+ */
+void set_default_time(const char *timezone) {
+    ESP_LOGI(TAG, "Configurando hora por defecto");
+    
+    // Obtener tiempo actual para ver si ya está configurado
+    time_t now;
+    struct tm timeinfo = {0};
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    
+    // Si el año es menor a 2022, configurar una fecha por defecto
+    if (timeinfo.tm_year < (2022 - 1900)) {
+        struct tm default_time = {
+            .tm_year = 2023 - 1900,  // Año 2023
+            .tm_mon = 0,             // Enero
+            .tm_mday = 1,            // Día 1
+            .tm_hour = 12,           // 12:00
+            .tm_min = 0,
+            .tm_sec = 0
+        };
+        
+        struct timeval tv = {
+            .tv_sec = mktime(&default_time),
+            .tv_usec = 0
+        };
+        
+        settimeofday(&tv, NULL);
+        ESP_LOGI(TAG, "Hora por defecto configurada: 2023-01-01 12:00:00");
+    }
+    
+    // Configurar zona horaria
+    if (timezone != NULL) {
+        setenv("TZ", timezone, 1);
+    } else {
+        setenv("TZ", "EST4", 1);
+    }
+    tzset();
+    
+    // Mostrar la hora configurada
+    char time_buf[64];
+    format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+    ESP_LOGI(TAG, "Hora actual: %s", time_buf);
+}
+
+// Variable global para el estado de sincronización
+static bool ntp_sync_successful = false;
+
+/**
+ * @brief Tarea para intentar sincronización NTP periódicamente
+ * 
+ * @param pvParameter Parámetro (no usado)
+ */
+void ntp_periodic_sync_task(void *pvParameter) {
+    const char *timezone = (const char *)pvParameter;
+    const int RETRY_INTERVAL_MS = 60000;  // 1 minuto entre reintentos
+    const int DAILY_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;  // 24 horas
+    
+    // Dar tiempo a que la red se estabilice
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    
+    // Bucle de reintento si no hay sincronización inicial
+    while (!ntp_sync_successful) {
+        ESP_LOGI(TAG, "Intentando sincronización NTP periódica");
+        
+        if (test_internet_connectivity()) {
+            ntp_sync_successful = sync_ntp_time(timezone);
+            
+            if (ntp_sync_successful) {
+                char time_buf[64];
+                format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+                ESP_LOGI(TAG, "Sincronización NTP exitosa. Hora actualizada: %s", time_buf);
+            } else {
+                ESP_LOGW(TAG, "Falló la sincronización NTP periódica");
+            }
+        } else {
+            ESP_LOGW(TAG, "Sin conexión a Internet para sincronización NTP");
+        }
+        
+        vTaskDelay(RETRY_INTERVAL_MS / portTICK_PERIOD_MS);
+    }
+    
+    // Una vez sincronizado exitosamente, cambiar a sincronización diaria
+    while (1) {
+        vTaskDelay(DAILY_SYNC_INTERVAL_MS / portTICK_PERIOD_MS);
+        
+        ESP_LOGI(TAG, "Realizando sincronización NTP diaria");
+        sync_ntp_time(timezone);
+        
+        char time_buf[64];
+        format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+        ESP_LOGI(TAG, "Hora sincronizada: %s", time_buf);
+    }
+}
+
 // Ejemplo de función inicializadora para ser llamada desde app_main
 void ntp_init(const char *ssid, const char *password, const char *timezone)
 {

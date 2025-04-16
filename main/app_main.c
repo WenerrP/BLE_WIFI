@@ -187,27 +187,45 @@ static void wifi_connection_callback(char *ip) {
     
     ESP_LOGI(TAG, "Conexión WiFi establecida con IP: %s", ip);
     
-    // AQUÍ es donde sincronizamos NTP (después de tener conexión WiFi)
+    // Sincronizar NTP con múltiples intentos
     ESP_LOGI(TAG, "Sincronizando hora por NTP");
-    bool ntp_success = sync_ntp_time("EST4");
+    bool ntp_success = sync_ntp_time_with_retry("EST4", 3);
+    
+    // Establecer hora por defecto si falla NTP
     if (!ntp_success) {
         ESP_LOGW(TAG, "No se pudo sincronizar hora con NTP. Algunas funciones pueden no operar correctamente.");
-        // Reintento opcional
-    } else {
-        char time_buf[64];
-        format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
-        ESP_LOGI(TAG, "Hora actual: %s", time_buf);
-        
-        // Inicializar los sistemas que dependen de NTP
-        ESP_LOGI(TAG, "Inicializando almacenamiento de medicamentos");
-        medication_storage_init();
-        
-        ESP_LOGI(TAG, "Iniciando MQTT");
-        mqtt_app_init();
-        
-        ESP_LOGI(TAG, "Inicializando dispensador de medicamentos");
-        medication_dispenser_init();
+        set_default_time("EST4");
     }
+    
+    // Crear tarea de sincronización periódica
+    static bool sync_task_created = false;
+    if (!sync_task_created) {
+        char *timezone_param = malloc(5);
+        if (timezone_param != NULL) {
+            strcpy(timezone_param, "EST4");
+            xTaskCreate(ntp_periodic_sync_task, "ntp_sync", 4096, (void*)timezone_param, 3, NULL);
+            sync_task_created = true;
+            ESP_LOGI(TAG, "Tarea de sincronización NTP periódica iniciada");
+        }
+    }
+    
+    // Continuar con la inicialización SIEMPRE
+    char time_buf[64];
+    format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
+    ESP_LOGI(TAG, "Hora actual (posiblemente aproximada): %s", time_buf);
+    
+    // Inicializar sistemas
+    ESP_LOGI(TAG, "Inicializando almacenamiento de medicamentos");
+    medication_storage_init();
+    
+    ESP_LOGI(TAG, "Iniciando MQTT");
+    mqtt_app_init();
+    
+    ESP_LOGI(TAG, "Inicializando dispensador de medicamentos");
+    medication_dispenser_init();
+    
+    // Publicar estado cuando todo esté listo
+    publish_device_status("online");
 }
 
 // Modificar el callback de WiFi para manejar fallos
@@ -241,17 +259,16 @@ void app_main(void)
     // 1. Configurar LEDs
     configure_leds();
     
-    // 2. Inicializar WiFi y registrar callbacks
-    ESP_LOGI(TAG, "Iniciando WiFi provisioning");
-    EventGroupHandle_t wifi_event_group = wifi_provisioning_init();
+    // 2. Registrar callbacks para eventos WiFi
     wifi_provisioning_set_callback(wifi_connection_callback);
     wifi_provisioning_set_failure_callback(wifi_failure_callback);
     
-    // 3. Crear tarea para botón de reset
+    // 3. Inicializar WiFi provisioning
+    ESP_LOGI(TAG, "Iniciando provisioning WiFi con callbacks personalizados");
+    wifi_event_group = wifi_provisioning_init();
+    
+    // 4. Crear tarea para botón de reset
     xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
     
-    // 4. Bucle principal (simplificado)
-    while (1) {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
+    // La lógica principal se ejecutará en los callbacks
 }

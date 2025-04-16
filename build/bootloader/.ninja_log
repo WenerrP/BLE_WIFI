@@ -214,3 +214,7 @@
 59480	62203	7663759411433632	C:/Users/wener/BLE_WIFI/build/bootloader/.bin_timestamp	b14b0739bdc462e1
 62203	63528	7663759412992742	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae
 62203	63528	7663759412992742	C:/Users/wener/BLE_WIFI/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae
+62	356	7665140764398798	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae
+62	356	7665140764398798	C:/Users/wener/BLE_WIFI/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae
+64	340	7665144692457469	esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae
+64	340	7665144692457469	C:/Users/wener/BLE_WIFI/build/bootloader/esp-idf/esptool_py/CMakeFiles/bootloader_check_size	58c38bff6c62bae

@@ -23,6 +23,38 @@ void wifi_init(const char *ssid, const char *password);
 bool sync_ntp_time(const char *timezone);
 
 /**
+ * @brief Prueba la conectividad a Internet
+ * 
+ * @return true si hay conexión a Internet
+ * @return false si no hay conexión
+ */
+bool test_internet_connectivity(void);
+
+/**
+ * @brief Intenta sincronizar NTP con múltiples reintentos
+ * 
+ * @param timezone Zona horaria
+ * @param max_attempts Número máximo de intentos
+ * @return true si la sincronización fue exitosa
+ * @return false si todos los intentos fallaron
+ */
+bool sync_ntp_time_with_retry(const char *timezone, int max_attempts);
+
+/**
+ * @brief Configura una hora por defecto cuando NTP falla
+ * 
+ * @param timezone Zona horaria a configurar
+ */
+void set_default_time(const char *timezone);
+
+/**
+ * @brief Tarea para sincronización NTP periódica
+ * 
+ * @param pvParameter Parámetro (debe ser un puntero a string con la zona horaria)
+ */
+void ntp_periodic_sync_task(void *pvParameter);
+
+/**
  * @brief Obtiene el tiempo actual en milisegundos desde epoch
  * 
  * @return int64_t Timestamp en milisegundos
