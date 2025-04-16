@@ -85,7 +85,7 @@ void wifi_init(const char *ssid, const char *password)
     }
 }
 
-// Función para sincronizar el tiempo con NTP
+// Modificación a la función sync_ntp_time existente
 bool sync_ntp_time(const char *timezone)
 {
     static bool sntp_initialized = false;
@@ -108,14 +108,12 @@ bool sync_ntp_time(const char *timezone)
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
     
-    // Inicializar SNTP con más opciones y diagnóstico
+    // Inicializar SNTP
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     ESP_LOGI(TAG, "Configurando servidores NTP...");
     sntp_setservername(0, "pool.ntp.org");
     sntp_setservername(1, "time.google.com");
     sntp_setservername(2, "time.cloudflare.com");
-    // Opcional: Habilitar logging de SNTP (si está disponible en la configuración)
-    // sntp_set_time_sync_notification_cb(time_sync_notification_cb);
     
     sntp_init();
     ESP_LOGI(TAG, "SNTP inicializado, esperando respuesta de servidores");
@@ -132,36 +130,17 @@ bool sync_ntp_time(const char *timezone)
     }
     tzset();
 
-    // Esperar sincronización con mejor diagnóstico
+    // Esperar sincronización
     time_t now = 0;
     struct tm timeinfo = {0};
     int retry = 0;
-    const int retry_count = 15;
+    const int retry_count = 10;  // Cambiado a 10 como en notas.txt
 
-    while (timeinfo.tm_year < (2022 - 1900) && ++retry < retry_count)
+    while (timeinfo.tm_year < (2024 - 1900) && ++retry < retry_count)  // Año actualizado a 2024
     {
         ESP_LOGI(TAG, "Esperando sincronización NTP... (%d/%d)", retry, retry_count);
         
-        // Si es el 5to o 10mo intento, mostrar más diagnóstico
-        if (retry == 5 || retry == 10) {
-            // Reemplazar el código de tcpip_adapter por esp_netif
-            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            if (netif) {
-                esp_netif_ip_info_t ip_info;
-                if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-                    ESP_LOGI(TAG, "Diagnóstico - IP: " IPSTR ", GW: " IPSTR,
-                            IP2STR(&ip_info.ip), IP2STR(&ip_info.gw));
-                }
-            }
-            
-            for (int i = 0; i < 3; i++) {
-                if (sntp_getservername(i)) {
-                    ESP_LOGI(TAG, "Servidor NTP %d: %s", i, sntp_getservername(i));
-                }
-            }
-        }
-        
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(2000 / portTICK_PERIOD_MS);  // Mayor tiempo de espera, 2 segundos como en notas.txt
         time(&now);
         localtime_r(&now, &timeinfo);
     }

@@ -31,7 +31,9 @@
         "mqtt_connection.h": "c",
         "ntp_func.h": "c",
         "stdio.h": "c",
-        "medication_hardware.h": "c"
+        "medication_hardware.h": "c",
+        "nextion_driver.h": "c",
+        "freertos.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"

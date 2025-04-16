@@ -18,8 +18,8 @@
 #include <driver/gpio.h>
 #include <esp_timer.h>
 #include <esp_wifi.h> 
+#include <esp_intr_alloc.h>
 
-// Incluir nuestros módulos
 #include "wifi_provisioning.h"
 #include "mqtt/mqtt_app.h"
 #include "medication/medication_storage.h"
@@ -27,9 +27,9 @@
 #include "ntp_func.h"
 
 #define LED_GPIO_PIN_A 2
-#define LED_GPIO_PIN_B 13
-#define LED_GPIO_PIN_C 14
-#define RESET_BUTTON_GPIO_PIN 12
+#define LED_GPIO_PIN_B 19
+#define LED_GPIO_PIN_C 21
+#define RESET_BUTTON_GPIO_PIN 23
 #define MAX_WIFI_RETRY_COUNT 5
 
 // Variable para rastrear el estado de los LEDs
@@ -43,6 +43,11 @@ static EventGroupHandle_t wifi_event_group = NULL;
 static bool wifi_failed = false;
 static int wifi_retry_count = 0;
 static bool wifi_connected = false;  // Añadir esta línea
+
+// Agrega estas variables para manejar la interrupción del botón
+static QueueHandle_t gpio_evt_queue = NULL;
+static bool button_pressed_flag = false;
+static bool gpio_interrupt_enabled = true;
 
 // Declarar las funciones de callback primero
 static void wifi_connection_callback(char *ip);
@@ -74,53 +79,73 @@ static void configure_leds(void)
     gpio_set_level(LED_GPIO_PIN_C, 0);
 }
 
-// Tarea para monitorear el botón de reset
-static void button_task(void *pvParameter) {
-    // Configurar el pin del botón con resistencia pull-up interna
-    gpio_reset_pin(RESET_BUTTON_GPIO_PIN);
-    gpio_set_direction(RESET_BUTTON_GPIO_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(RESET_BUTTON_GPIO_PIN, GPIO_PULLUP_ONLY);
+// Manejador de la interrupción del botón
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    if (gpio_interrupt_enabled) {
+        xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+    }
+}
+
+// Tarea que procesa las interrupciones del botón (reemplaza button_task)
+static void gpio_button_task(void* arg)
+{
+    uint32_t gpio_num;
+    const uint32_t debounce_time_ms = 200;
+    uint64_t last_press_time = 0;
     
-    // Estado anterior del botón
-    int last_level = 1; // Asumimos pull-up, por lo que 1 es el estado sin presionar
-    
-    while (1) {
-        // Leer el estado actual del botón
-        int level = gpio_get_level(RESET_BUTTON_GPIO_PIN);
-        
-        // Detectar flanco descendente (botón presionado)
-        if (last_level == 1 && level == 0) {
-            ESP_LOGI(TAG, "Botón de reset presionado");
-            
-            if (wifi_failed) {
-                ESP_LOGI(TAG, "Reiniciando modo provisioning después de fallos WiFi");
+    while(1) {
+        // Espera a recibir un evento desde la interrupción
+        if(xQueueReceive(gpio_evt_queue, &gpio_num, portMAX_DELAY)) {
+            // Verificar si ha pasado suficiente tiempo desde la última pulsación (debounce)
+            uint64_t current_time = esp_timer_get_time() / 1000;
+            if (current_time - last_press_time > debounce_time_ms) {
+                last_press_time = current_time;
                 
-                // Reiniciar el contador de intentos
-                wifi_retry_count = 0;
-                wifi_failed = false;
+                // Deshabilitar interrupciones temporalmente para evitar rebotes
+                gpio_interrupt_enabled = false;
                 
-                // Reiniciar el proceso de provisioning de forma segura
-                wifi_provisioning_reset_for_reprovision();
+                // Verificar si el botón está realmente presionado (nivel bajo = presionado)
+                if (gpio_get_level(RESET_BUTTON_GPIO_PIN) == 0) {
+                    ESP_LOGI(TAG, "Botón de reset detectado por interrupción");
+                    button_pressed_flag = true;
+                    
+                    // Deshabilitamos WiFi y reiniciamos el provisioning
+                    ESP_LOGI(TAG, "Reiniciando modo provisioning");
+                    
+                    // Reiniciar contador de intentos y estado
+                    wifi_retry_count = 0;
+                    wifi_failed = false;
+                    
+                    // Parpadear LEDs para indicar reinicio
+                    for (int i = 0; i < 5; i++) {
+                        gpio_set_level(LED_GPIO_PIN_A, 1);
+                        gpio_set_level(LED_GPIO_PIN_B, 1);
+                        gpio_set_level(LED_GPIO_PIN_C, 1);
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                        gpio_set_level(LED_GPIO_PIN_A, 0);
+                        gpio_set_level(LED_GPIO_PIN_B, 0);
+                        gpio_set_level(LED_GPIO_PIN_C, 0);
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                    }
+                    
+                    // Reiniciar el proceso de provisioning
+                    wifi_provisioning_reset_for_reprovision();
+                    
+                    // Pequeña espera para asegurar que los recursos se liberaron
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                    
+                    // Reiniciar el ESP32
+                    ESP_LOGI(TAG, "Reiniciando el dispositivo para un nuevo provisioning limpio");
+                    esp_restart();
+                }
                 
-                // Esperar un breve momento para asegurar que todos los recursos se hayan liberado
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                
-                // Reiniciar el ESP32 en lugar de intentar reiniciar solo el provisioning
-                ESP_LOGI(TAG, "Reiniciando el dispositivo para un nuevo provisioning limpio");
-                esp_restart();
-                
-                // El código no llegará aquí debido al reinicio
+                // Re-habilitar interrupciones después de un pequeño retraso
+                vTaskDelay(debounce_time_ms / portTICK_PERIOD_MS);
+                gpio_interrupt_enabled = true;
             }
-            
-            // Debounce: pequeña pausa para evitar lecturas múltiples
-            vTaskDelay(50 / portTICK_PERIOD_MS);
         }
-        
-        // Actualizar el estado anterior
-        last_level = level;
-        
-        // Retraso para no consumir mucha CPU
-        vTaskDelay(50 / portTICK_PERIOD_MS);
     }
 }
 
@@ -184,6 +209,12 @@ static void wifi_connection_callback(char *ip) {
     // Actualizar estado de conexión
     wifi_connected = true;
     wifi_failed = false;
+    wifi_retry_count = 0;  // Importante: resetear el contador de intentos
+    
+    // Indicación visual - LED A encendido para mostrar conexión exitosa
+    gpio_set_level(LED_GPIO_PIN_A, 1);
+    gpio_set_level(LED_GPIO_PIN_B, 0);
+    gpio_set_level(LED_GPIO_PIN_C, 0);
     
     ESP_LOGI(TAG, "Conexión WiFi establecida con IP: %s", ip);
     
@@ -228,29 +259,24 @@ static void wifi_connection_callback(char *ip) {
     publish_device_status("online");
 }
 
-// Modificar el callback de WiFi para manejar fallos
+// Modificar el callback de WiFi para manejar fallos sin límite de reintentos
 static void wifi_failure_callback(void) {
     wifi_retry_count++;
+    wifi_connected = false;
     
-    wifi_connected = false;  // Añadir esta línea
+    // Indicación visual de intento de reconexión: parpadeo del LED B
+    static bool led_state = false;
+    led_state = !led_state;
     
-    if (wifi_retry_count >= MAX_WIFI_RETRY_COUNT) {
-        ESP_LOGW(TAG, "Máximo número de intentos WiFi alcanzado (%d). Esperando botón de reset.", MAX_WIFI_RETRY_COUNT);
-        wifi_failed = true;
-        
-        // Apagamos el WiFi para ahorrar energía
-        esp_wifi_stop();  // Ahora está correctamente declarada con el include
-        
-        // Encender el LED A para indicar modo de error (opcional)
-        gpio_set_level(LED_GPIO_PIN_A, 1);
-        gpio_set_level(LED_GPIO_PIN_B, 0);
-        gpio_set_level(LED_GPIO_PIN_C, 0);
-    } else {
-        ESP_LOGW(TAG, "Fallo de conexión WiFi, intento %d de %d", wifi_retry_count, MAX_WIFI_RETRY_COUNT);
-    }
+    gpio_set_level(LED_GPIO_PIN_A, led_state);
+    gpio_set_level(LED_GPIO_PIN_B, 0);
+    gpio_set_level(LED_GPIO_PIN_C, 0);
+    
+    // Simplemente loguear el intento sin detener el WiFi
+    ESP_LOGW(TAG, "Fallo de conexión WiFi, intento %d. Continuando reconexión...", wifi_retry_count);
 }
 
-// Modificación al app_main para crear la tarea de monitoreo del botón
+// Modificación al app_main para configurar el botón como interrupción
 void app_main(void)
 {
     // Variables e inicialización
@@ -259,16 +285,37 @@ void app_main(void)
     // 1. Configurar LEDs
     configure_leds();
     
-    // 2. Registrar callbacks para eventos WiFi
+    // 2. Configurar botón con interrupción
+    // Crear una cola para manejar eventos de interrupción
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    
+    // Configurar el pin del botón
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << RESET_BUTTON_GPIO_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,  // Interrupción en flanco descendente (botón presionado)
+    };
+    gpio_config(&io_conf);
+    
+    // Instalar el controlador del servicio de interrupción GPIO
+    // Usa 0 (sin flags) o cualquiera de las banderas ESP_INTR_FLAG_* que necesites
+    gpio_install_isr_service(0);
+    
+    // Conectar el manejador de la interrupción con el GPIO específico
+    gpio_isr_handler_add(RESET_BUTTON_GPIO_PIN, gpio_isr_handler, (void*) RESET_BUTTON_GPIO_PIN);
+    
+    // Crear tarea para procesar las interrupciones del botón
+    xTaskCreate(gpio_button_task, "gpio_button_task", 2048, NULL, 10, NULL);
+    
+    // 3. Registrar callbacks para eventos WiFi
     wifi_provisioning_set_callback(wifi_connection_callback);
     wifi_provisioning_set_failure_callback(wifi_failure_callback);
     
-    // 3. Inicializar WiFi provisioning
+    // 4. Inicializar WiFi provisioning
     ESP_LOGI(TAG, "Iniciando provisioning WiFi con callbacks personalizados");
     wifi_event_group = wifi_provisioning_init();
-    
-    // 4. Crear tarea para botón de reset
-    xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
     
     // La lógica principal se ejecutará en los callbacks
 }

@@ -1,0 +1,33 @@
+void sync_ntp_time()
+{
+    ESP_LOGI(TAG, "Inicializando NTP...");
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org"); // Servidor NTP
+    sntp_init();
+
+    // Configurar zona horaria de República Dominicana (GMT-4)
+    setenv("TZ", "EST4", 1);
+    tzset();
+
+    // Esperar sincronización
+    time_t now = 0;
+    struct tm timeinfo = {0};
+    int retry = 0;
+    const int retry_count = 10;
+
+    while (timeinfo.tm_year < (2024 - 1900) && ++retry < retry_count)
+    {
+        ESP_LOGI(TAG, "Esperando sincronización NTP...");
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
+        time(&now);
+        localtime_r(&now, &timeinfo);
+    }
+
+    if (retry == retry_count)
+    {
+        ESP_LOGE(TAG, "Fallo al sincronizar NTP.");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Hora sincronizada correctamente.");
+}

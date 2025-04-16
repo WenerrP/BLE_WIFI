@@ -10,6 +10,7 @@ idf_component_register(
         "medication/medication_dispenser.c" 
         "medication/medication_hardware.c"
         "ntp_func.c"
+        "nextion_driver.c"
     INCLUDE_DIRS 
         "."
         "mqtt"
