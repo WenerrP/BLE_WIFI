@@ -29,4 +29,7 @@ void medication_dispenser_set_auto_dispense(bool enable);
  */
 esp_err_t medication_dispenser_manual_dispense(const char* medication_id, const char* schedule_id);
 
+// Añadir esta declaración junto con las demás
+void check_missed_medications(void);
+
 #endif /* MEDICATION_DISPENSER_H */

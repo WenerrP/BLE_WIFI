@@ -8,6 +8,7 @@
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "medication_hardware.h"
+#include "buzzer_driver.h"
 
 static const char *TAG = "MED_HARDWARE";
 
@@ -48,6 +49,16 @@ static void pump_timer_callback(void* arg) {
     medication_hardware_pump_stop();
     pump_context.in_use = false;
     ESP_LOGI(TAG, "Bomba detenida automáticamente por temporizador");
+}
+
+// Ejemplo de función que maneja errores de hardware
+void handle_hardware_error(esp_err_t error_code) {
+    ESP_LOGE(TAG, "Error de hardware: %d", error_code);
+    
+    // Reproducir patrón de error
+    buzzer_play_pattern(BUZZER_PATTERN_ERROR);
+    
+    // Resto del código de manejo de errores...
 }
 
 // Función corregida para medir distancia con sensor ultrasónico
@@ -98,6 +109,9 @@ esp_err_t medication_hardware_init(void) {
     }
     
     ESP_LOGI(TAG, "Inicializando hardware de dispensación");
+    
+    // Inicializar buzzer primero para poder dar feedback de error si algo falla
+    buzzer_init();
     
     // 1. Configurar los pines de los sensores ultrasónicos
     gpio_config_t io_conf = {};
@@ -151,6 +165,9 @@ esp_err_t medication_hardware_init(void) {
     
     hardware_initialized = true;
     ESP_LOGI(TAG, "Hardware de dispensación inicializado correctamente");
+    
+    // Sonido de confirmación
+    buzzer_play_pattern(BUZZER_PATTERN_CONFIRM);
     
     return ESP_OK;
 }
@@ -339,31 +356,53 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
     if (is_liquid) {
         if (compartment_number != LIQUID_COMPARTMENT_NUM) {
             ESP_LOGE(TAG, "El medicamento líquido solo puede dispensarse del compartimento 4");
+            // Reproducir sonido de error
+            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
             return ESP_ERR_INVALID_ARG;
         }
         
         // Verificar si hay un recipiente para el líquido
         if (medication_hardware_check_liquid_presence() != OBJECT_PRESENT) {
             ESP_LOGW(TAG, "No se detecta recipiente para líquido. Abortando dispensación.");
+            // Reproducir sonido de error
+            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
             return ESP_ERR_INVALID_STATE;
         }
+        
+        // Reproducir sonido de "medicamento listo"
+        buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
         
         // Activar la bomba por la cantidad especificada (en milisegundos)
         ESP_LOGI(TAG, "Dispensando medicamento líquido por %lu ms", (unsigned long)amount);
         result = medication_hardware_pump_start(PUMP_DUTY_CYCLE_MAX, amount);
         
+        // Sonido de confirmación cuando termina
+        if (result == ESP_OK) {
+            // El sonido debe reproducirse después de la dispensación
+            // Por lo tanto, esperamos a que termine la dispensación
+            vTaskDelay(pdMS_TO_TICKS(amount + 100));  // Agregar pequeño margen
+            buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_TAKEN);
+        }
+        
     } else {
         // Es píldora, debe estar en los compartimentos 1-3
         if (compartment_number > MAX_PILL_COMPARTMENTS) {
             ESP_LOGE(TAG, "Las píldoras solo pueden dispensarse de los compartimentos 1-3");
+            // Reproducir sonido de error
+            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
             return ESP_ERR_INVALID_ARG;
         }
         
         // Verificar si hay un recipiente para las píldoras
         if (medication_hardware_check_pill_presence() != OBJECT_PRESENT) {
             ESP_LOGW(TAG, "No se detecta recipiente para píldoras. Abortando dispensación.");
+            // Reproducir sonido de error
+            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
             return ESP_ERR_INVALID_STATE;
         }
+        
+        // Reproducir sonido de "medicamento listo"
+        buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
         
         // Abrir el compartimento de píldoras
         ESP_LOGI(TAG, "Dispensando %lu píldoras del compartimento %d", (unsigned long)amount, compartment_number);
@@ -371,6 +410,8 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
         // Abrir el compartimento
         result = medication_hardware_open_compartment(compartment_number);
         if (result != ESP_OK) {
+            // Reproducir sonido de error
+            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
             return result;
         }
         
@@ -382,6 +423,11 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
         
         // Cerrar el compartimento
         result = medication_hardware_close_compartment(compartment_number);
+        
+        // Sonido de confirmación cuando termina
+        if (result == ESP_OK) {
+            buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_TAKEN);
+        }
     }
     
     return result;
@@ -404,4 +450,13 @@ void medication_hardware_deinit(void) {
     
     hardware_initialized = false;
     ESP_LOGI(TAG, "Hardware de dispensación deinicializado");
+}
+
+esp_err_t medication_hardware_alert_missed(void) {
+    ESP_LOGW(TAG, "¡Alerta! Medicamento no tomado");
+    
+    // Reproducir sonido de alerta de medicamento no tomado
+    buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_MISSED);
+    
+    return ESP_OK;
 }

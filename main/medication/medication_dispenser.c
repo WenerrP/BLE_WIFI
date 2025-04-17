@@ -12,6 +12,7 @@
 #include "../mqtt/mqtt_app.h"
 #include "../ntp_func.h" // Para acceder a las funciones de tiempo NTP
 #include "medication_hardware.h"  // Añadir esta línea al inicio
+#include "buzzer_driver.h" // Añadir el include al principio
 
 static const char *TAG = "MED_DISPENSER";
 static TaskHandle_t dispenser_task_handle = NULL;
@@ -190,10 +191,22 @@ void medication_dispenser_set_auto_dispense(bool enable) {
     ESP_LOGI(TAG, "Dispensación automática %s", enable ? "habilitada" : "deshabilitada");
 }
 
-// Callback del timer para verificar medicamentos
+// Modificar el callback del timer para que también verifique medicamentos perdidos
 static void check_timer_callback(void* arg) {
-    ESP_LOGI(TAG, "Timer de verificación activado, notificando a la tarea del dispensador");
-    // Enviar una notificación a la tarea para que verifique los medicamentos
+    ESP_LOGI(TAG, "Timer de verificación activado");
+    
+    // Verificar medicamentos no tomados
+    static int missed_counter = 0;
+    missed_counter++;
+    
+    // Verificar medicamentos perdidos cada 5 minutos (10 ciclos de 30 segundos)
+    if (missed_counter >= 10) {
+        ESP_LOGI(TAG, "Verificando medicamentos perdidos...");
+        check_missed_medications();
+        missed_counter = 0;
+    }
+    
+    // Notificar a la tarea para que verifique los medicamentos a dispensar
     if (dispenser_task_handle != NULL) {
         xTaskNotifyGive(dispenser_task_handle);
     } else {
@@ -429,5 +442,106 @@ static void medication_dispenser_task(void *pvParameters) {
         }
         
         ESP_LOGI(TAG, "Ciclo de verificación completado, esperando próxima notificación");
+    }
+}
+
+// Buscar funciones que manejen recordatorios y modificarlas para usar el buzzer
+// Por ejemplo, una función que envíe recordatorios podría modificarse así:
+
+void medication_reminder_callback(void *arg) {
+    medication_schedule_t *schedule = (medication_schedule_t *)arg;
+    
+    // Necesitamos encontrar el medicamento al que pertenece este horario
+    int count;
+    medication_t *meds = medication_storage_get_all_medications(&count);
+    const char *med_name = "desconocido"; // Valor por defecto
+    
+    // Buscar el medicamento que contiene este horario
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < meds[i].schedules_count; j++) {
+            if (strcmp(meds[i].schedules[j].id, schedule->id) == 0) {
+                med_name = meds[i].name;
+                break;
+            }
+        }
+    }
+    
+    ESP_LOGI(TAG, "Recordatorio de medicamento: %s (horario %s)", med_name, schedule->id);
+    
+    // Reproducir alerta de recordatorio
+    buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
+    
+    // Si hay una función que muestre mensajes en pantalla, llamarla aquí
+    
+    // Si hay un LED de notificación, activarlo aquí
+    
+    // Resto de la lógica de recordatorio...
+}
+
+// Función que verifica medicamentos perdidos/no tomados
+void check_missed_medications(void) {
+    ESP_LOGI(TAG, "Verificando medicamentos no tomados...");
+    
+    // Obtener el tiempo actual
+    int64_t current_time = get_time_ms();
+    
+    // Obtener todos los medicamentos
+    int count;
+    medication_t *meds = medication_storage_get_all_medications(&count);
+    
+    if (!meds || count == 0) {
+        ESP_LOGI(TAG, "No hay medicamentos para verificar");
+        return;
+    }
+    
+    // Iterar sobre todos los medicamentos y sus horarios
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < meds[i].schedules_count; j++) {
+            medication_schedule_t *schedule = &meds[i].schedules[j];
+            
+            // Verificamos si hay un medicamento que debió dispensarse hace más de 30 minutos
+            // y aún no se ha marcado como dispensado o tomado
+            int64_t threshold_time = 30 * 60 * 1000; // 30 minutos en ms
+            bool is_missed = (schedule->next_dispense_time < current_time - threshold_time) &&
+                             (schedule->last_dispensed_time < schedule->next_dispense_time);
+            
+            if (is_missed) {
+                ESP_LOGW(TAG, "¡Medicamento no tomado detectado! %s, horario %s", 
+                         meds[i].name, schedule->id);
+                
+                // Convertir a formato legible
+                char next_time_str[32];
+                format_time(schedule->next_dispense_time, next_time_str, sizeof(next_time_str));
+                
+                ESP_LOGW(TAG, "  - Programado para: %s (hace %lld minutos)", 
+                         next_time_str, (current_time - schedule->next_dispense_time) / 60000);
+                
+                // Generar alerta sonora
+                medication_hardware_alert_missed();
+                
+                // Publicar notificación MQTT de medicamento perdido
+                cJSON *root = cJSON_CreateObject();
+                if (root) {
+                    cJSON_AddStringToObject(root, "type", "medication_missed");
+                    cJSON_AddStringToObject(root, "medicationId", meds[i].id);
+                    cJSON_AddStringToObject(root, "name", meds[i].name);
+                    cJSON_AddStringToObject(root, "scheduleId", schedule->id);
+                    cJSON_AddNumberToObject(root, "scheduledTime", schedule->next_dispense_time);
+                    cJSON_AddNumberToObject(root, "currentTime", current_time);
+                    
+                    char *json_str = cJSON_Print(root);
+                    if (json_str) {
+                        mqtt_app_publish(MQTT_TOPIC_DEVICE_TELEMETRY, json_str, 0, 1, false);
+                        free(json_str);
+                    }
+                    
+                    cJSON_Delete(root);
+                }
+                
+                // Opcionalmente, marcar como perdido en el almacenamiento
+                // (si tienes esa función implementada)
+                // medication_storage_mark_missed(meds[i].id, schedule->id);
+            }
+        }
     }
 }

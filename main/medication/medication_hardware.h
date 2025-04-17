@@ -79,4 +79,7 @@ void medication_hardware_deinit(void);
  */
 esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liquid, uint32_t amount);
 
+// Añadir esta declaración junto con las demás
+esp_err_t medication_hardware_alert_missed(void);
+
 #endif /* MEDICATION_HARDWARE_H */

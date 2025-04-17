@@ -25,6 +25,7 @@
 #include "medication/medication_storage.h"
 #include "medication/medication_dispenser.h"
 #include "ntp_func.h"
+#include "buzzer_driver.h"
 
 #define LED_GPIO_PIN_A 2
 #define LED_GPIO_PIN_B 19
@@ -83,12 +84,10 @@ static void configure_leds(void)
 static void IRAM_ATTR gpio_isr_handler(void* arg)
 {
     uint32_t gpio_num = (uint32_t) arg;
-    if (gpio_interrupt_enabled) {
-        xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-    }
+    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
 }
 
-// Tarea que procesa las interrupciones del botón (reemplaza button_task)
+// Tarea que procesa las interrupciones del botón
 static void gpio_button_task(void* arg)
 {
     uint32_t gpio_num;
@@ -103,20 +102,21 @@ static void gpio_button_task(void* arg)
             if (current_time - last_press_time > debounce_time_ms) {
                 last_press_time = current_time;
                 
-                // Deshabilitar interrupciones temporalmente para evitar rebotes
-                gpio_interrupt_enabled = false;
+                ESP_LOGI(TAG, "Interrupción detectada en GPIO %lu", gpio_num);
                 
-                // Verificar si el botón está realmente presionado (nivel bajo = presionado)
-                if (gpio_get_level(RESET_BUTTON_GPIO_PIN) == 0) {
-                    ESP_LOGI(TAG, "Botón de reset detectado por interrupción");
+                // Agregar un pequeño retraso para que el botón se estabilice
+                vTaskDelay(20 / portTICK_PERIOD_MS);
+                
+                // Verificar el nivel del pin directamente (PULL-UP: 0 cuando está presionado)
+                int button_level = gpio_get_level(RESET_BUTTON_GPIO_PIN);
+                ESP_LOGI(TAG, "Nivel del botón leído: %d", button_level);
+                
+                if (button_level == 0) {  // Botón está presionado (nivel bajo)
+                    ESP_LOGI(TAG, "Botón de reset presionado, iniciando secuencia de reset");
                     button_pressed_flag = true;
                     
-                    // Deshabilitamos WiFi y reiniciamos el provisioning
-                    ESP_LOGI(TAG, "Reiniciando modo provisioning");
-                    
-                    // Reiniciar contador de intentos y estado
-                    wifi_retry_count = 0;
-                    wifi_failed = false;
+                    // Desactivar temporalmente la interrupción para evitar activaciones múltiples
+                    gpio_intr_disable(RESET_BUTTON_GPIO_PIN);
                     
                     // Parpadear LEDs para indicar reinicio
                     for (int i = 0; i < 5; i++) {
@@ -130,7 +130,14 @@ static void gpio_button_task(void* arg)
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                     }
                     
+                    // Reproducir sonido
+                    buzzer_play_pattern(BUZZER_PATTERN_PROVISIONING);
+                    
+                    // Esperar a que termine el sonido
+                    vTaskDelay(500 / portTICK_PERIOD_MS);
+                    
                     // Reiniciar el proceso de provisioning
+                    ESP_LOGI(TAG, "Reiniciando modo provisioning");
                     wifi_provisioning_reset_for_reprovision();
                     
                     // Pequeña espera para asegurar que los recursos se liberaron
@@ -141,9 +148,9 @@ static void gpio_button_task(void* arg)
                     esp_restart();
                 }
                 
-                // Re-habilitar interrupciones después de un pequeño retraso
+                // Habilitar la interrupción nuevamente después de un tiempo para evitar rebotes
                 vTaskDelay(debounce_time_ms / portTICK_PERIOD_MS);
-                gpio_interrupt_enabled = true;
+                gpio_intr_enable(RESET_BUTTON_GPIO_PIN);
             }
         }
     }
@@ -216,14 +223,20 @@ static void wifi_connection_callback(char *ip) {
     gpio_set_level(LED_GPIO_PIN_B, 0);
     gpio_set_level(LED_GPIO_PIN_C, 0);
     
+    // Reproducir sonido de conexión WiFi exitosa
+    buzzer_play_pattern(BUZZER_PATTERN_WIFI_CONNECTED);
+    
     ESP_LOGI(TAG, "Conexión WiFi establecida con IP: %s", ip);
     
     // Sincronizar NTP con múltiples intentos
     ESP_LOGI(TAG, "Sincronizando hora por NTP");
     bool ntp_success = sync_ntp_time_with_retry("EST4", 3);
     
-    // Establecer hora por defecto si falla NTP
-    if (!ntp_success) {
+    if (ntp_success) {
+        // Reproducir sonido de sincronización NTP exitosa
+        buzzer_play_pattern(BUZZER_PATTERN_NTP_SUCCESS);
+    } else {
+        // Establecer hora por defecto si falla NTP
         ESP_LOGW(TAG, "No se pudo sincronizar hora con NTP. Algunas funciones pueden no operar correctamente.");
         set_default_time("EST4");
     }
@@ -272,11 +285,16 @@ static void wifi_failure_callback(void) {
     gpio_set_level(LED_GPIO_PIN_B, 0);
     gpio_set_level(LED_GPIO_PIN_C, 0);
     
+    // Reproducir sonido de fallo WiFi (solo cada 5 intentos para no molestar)
+    if (wifi_retry_count % 5 == 1) {
+        buzzer_play_pattern(BUZZER_PATTERN_WIFI_FAILED);
+    }
+    
     // Simplemente loguear el intento sin detener el WiFi
     ESP_LOGW(TAG, "Fallo de conexión WiFi, intento %d. Continuando reconexión...", wifi_retry_count);
 }
 
-// Modificación al app_main para configurar el botón como interrupción
+// Modificación en app_main para configurar el botón correctamente
 void app_main(void)
 {
     // Variables e inicialización
@@ -285,29 +303,37 @@ void app_main(void)
     // 1. Configurar LEDs
     configure_leds();
     
+    // 2. Inicializar buzzer
+    buzzer_init();
+    
+    // Reproducir secuencia de inicio
+    buzzer_play_pattern(BUZZER_PATTERN_STARTUP);
+    
     // 2. Configurar botón con interrupción
     // Crear una cola para manejar eventos de interrupción
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     
-    // Configurar el pin del botón
+    // Configurar el pin del botón con pull-up
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << RESET_BUTTON_GPIO_PIN),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,     // Habilitar resistencia pull-up interna
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,  // Interrupción en flanco descendente (botón presionado)
+        .intr_type = GPIO_INTR_NEGEDGE,       // Interrupción en flanco descendente (botón presionado)
     };
     gpio_config(&io_conf);
     
-    // Instalar el controlador del servicio de interrupción GPIO
-    // Usa 0 (sin flags) o cualquiera de las banderas ESP_INTR_FLAG_* que necesites
-    gpio_install_isr_service(0);
+    // Instalar el servicio de interrupción con mayor prioridad
+    ESP_ERROR_CHECK(gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1));
     
     // Conectar el manejador de la interrupción con el GPIO específico
-    gpio_isr_handler_add(RESET_BUTTON_GPIO_PIN, gpio_isr_handler, (void*) RESET_BUTTON_GPIO_PIN);
+    ESP_ERROR_CHECK(gpio_isr_handler_add(RESET_BUTTON_GPIO_PIN, gpio_isr_handler, (void*) RESET_BUTTON_GPIO_PIN));
     
-    // Crear tarea para procesar las interrupciones del botón
-    xTaskCreate(gpio_button_task, "gpio_button_task", 2048, NULL, 10, NULL);
+    // Imprimir estado inicial del botón
+    ESP_LOGI(TAG, "Estado inicial del botón: %d", gpio_get_level(RESET_BUTTON_GPIO_PIN));
+    
+    // Crear tarea para procesar las interrupciones del botón con mayor stack
+    xTaskCreate(gpio_button_task, "gpio_button_task", 4096, NULL, 10, NULL);
     
     // 3. Registrar callbacks para eventos WiFi
     wifi_provisioning_set_callback(wifi_connection_callback);

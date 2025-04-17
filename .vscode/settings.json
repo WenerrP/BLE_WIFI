@@ -33,7 +33,9 @@
         "stdio.h": "c",
         "medication_hardware.h": "c",
         "nextion_driver.h": "c",
-        "freertos.h": "c"
+        "freertos.h": "c",
+        "chrono": "c",
+        "typeinfo": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"
