@@ -66,6 +66,14 @@ sensor_state_t medication_hardware_check_pill_presence(void);
 sensor_state_t medication_hardware_check_liquid_presence(void);
 
 /**
+ * @brief Espera la presencia de un recipiente con alertas periódicas
+ * @param is_liquid Indica si se espera un recipiente para líquido (true) o píldoras (false)
+ * @param max_wait_time_ms Tiempo máximo de espera en milisegundos
+ * @return OBJECT_PRESENT si se detecta el recipiente, OBJECT_NOT_PRESENT si se agota el tiempo de espera
+ */
+sensor_state_t wait_for_container_with_alerts(bool is_liquid, uint32_t max_wait_time_ms);
+
+/**
  * @brief Libera los recursos del hardware
  */
 void medication_hardware_deinit(void);
@@ -81,5 +89,11 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
 
 // Añadir esta declaración junto con las demás
 esp_err_t medication_hardware_alert_missed(void);
+
+/**
+ * @brief Ejecuta un diagnóstico completo de los servomotores
+ * @return ESP_OK si el diagnóstico se ejecutó correctamente
+ */
+esp_err_t medication_hardware_servo_diagnostic(void);
 
 #endif /* MEDICATION_HARDWARE_H */
