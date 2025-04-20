@@ -28,10 +28,25 @@ static const char *TAG = "MED_HARDWARE";
 #define SERVO_OPEN_POSITION      1500    // Posición abierta (90 grados)
 #define SERVO_CLOSE_POSITION     500     // Posición cerrada (0 grados)
 
+// Definiciones para sensores ultrasónicos
+#define ULTRASONIC_TIMEOUT_US    30000   // Timeout en microsegundos
+#define PILL_DETECTION_THRESHOLD  5.0    // Distancia en cm para detectar píldoras
+#define LIQUID_DETECTION_THRESHOLD 5.0  // Distancia en cm para detectar líquido
+#define MIN_TIME_BETWEEN_READINGS_US 60000 // Tiempo mínimo entre lecturas (60ms)
+
 // Definiciones para bomba
-#define PUMP_FREQUENCY           500    // Frecuencia PWM para bomba (Hz)
+#define PUMP_FREQUENCY           500     // Frecuencia PWM para bomba (Hz)
 #define PUMP_DUTY_CYCLE_MIN      0       // Mínimo duty cycle (apagado)
-#define PUMP_DUTY_CYCLE_MAX      50     // Máximo duty cycle (100%)
+#define PUMP_DUTY_CYCLE_MAX       50     // Máximo duty cycle (para dispensación)
+#define LIQUID_DISPENSE_BASE_TIME 1000   // Tiempo base en ms para dispensar líquido
+
+// Definiciones para dispensación de píldoras
+#define PILL_DISPENSE_BASE_TIME   1000    // Tiempo base en ms por píldora
+#define PILL_DISPENSE_TIME_PER_PILL 1000  // Tiempo adicional en ms por píldora extra
+
+// Tiempos de espera
+#define CONTAINER_WAIT_TIMEOUT_MS 60000  // Tiempo máximo de espera para recipiente (60s)
+#define CONTAINER_CHECK_INTERVAL_MS 1000  // Intervalo de verificación para recipiente (1s)
 
 // Variables para el control de hardware
 static bool hardware_initialized = false;
@@ -55,17 +70,7 @@ static void pump_timer_callback(void* arg) {
     ESP_LOGI(TAG, "Bomba detenida automáticamente por temporizador");
 }
 
-// Ejemplo de función que maneja errores de hardware
-void handle_hardware_error(esp_err_t error_code) {
-    ESP_LOGE(TAG, "Error de hardware: %d", error_code);
-    
-    // Reproducir patrón de error
-    buzzer_play_pattern(BUZZER_PATTERN_ERROR);
-    
-    // Resto del código de manejo de errores...
-}
-
-// Función corregida para medir distancia con sensor ultrasónico
+// Reemplazar en la función measure_distance
 float measure_distance(uint8_t trigger_pin, uint8_t echo_pin) {
     // Enviar un pulso de 10us al sensor
     gpio_set_level(trigger_pin, 1);
@@ -79,7 +84,7 @@ float measure_distance(uint8_t trigger_pin, uint8_t echo_pin) {
     // Esperar a que el pin ECHO se ponga en alto
     while (gpio_get_level(echo_pin) == 0) {
         // Verificar timeout
-        if ((esp_timer_get_time() - timeout_start) > 30000) {
+        if ((esp_timer_get_time() - timeout_start) > ULTRASONIC_TIMEOUT_US) {
             ESP_LOGW(TAG, "Timeout esperando señal ECHO alta");
             return -1;
         }
@@ -91,7 +96,7 @@ float measure_distance(uint8_t trigger_pin, uint8_t echo_pin) {
     // Esperar a que el pin ECHO se ponga en bajo
     while (gpio_get_level(echo_pin) == 1) {
         // Verificar timeout
-        if ((esp_timer_get_time() - start_time) > 30000) {  // 30ms timeout
+        if ((esp_timer_get_time() - start_time) > ULTRASONIC_TIMEOUT_US) {
             ESP_LOGW(TAG, "Timeout esperando señal ECHO baja");
             return -1;
         }
@@ -120,12 +125,7 @@ static bool check_servo_power_supply(void) {
         mcpwm_set_duty_in_us(servo_mcpwm_unit, timer, MCPWM_OPR_A, SERVO_MIN_PULSEWIDTH + 100);
         vTaskDelay(100 / portTICK_PERIOD_MS);
         mcpwm_set_duty_in_us(servo_mcpwm_unit, timer, MCPWM_OPR_A, SERVO_MIN_PULSEWIDTH);
-        
-        // Aquí podrías verificar la corriente consumida o algún otro parámetro
     }
-    
-    // Para una implementación más completa, podrías usar un ADC para
-    // verificar el voltaje de alimentación
     
     return true; // Asumimos que está bien por ahora
 }
@@ -224,12 +224,8 @@ esp_err_t medication_hardware_init(void) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
     ESP_LOGI(TAG, "Prueba de servomotores completada");
-    
-    // Añadir al final de medication_hardware_init:
-    // Test de sensores ultrasónicos
     ESP_LOGI(TAG, "Probando sensores ultrasónicos...");
-
-    // Test sensor de píldoras
+    
     float pill_distance = measure_distance(ULTRASONIC_PILL_TRIGGER, ULTRASONIC_PILL_ECHO);
     ESP_LOGI(TAG, "Sensor de píldoras - distancia: %.2f cm", pill_distance);
 
@@ -388,13 +384,13 @@ esp_err_t medication_hardware_pump_stop(void) {
     return ESP_OK;
 }
 
-// Modificar medication_hardware_check_pill_presence
+// Reemplazar en medication_hardware_check_pill_presence
 sensor_state_t medication_hardware_check_pill_presence(void) {
     // Asegurar intervalo mínimo entre lecturas (60ms recomendado)
     int64_t current_time = esp_timer_get_time();
-    if ((current_time - last_pill_reading_time) < 60000) {
+    if ((current_time - last_pill_reading_time) < MIN_TIME_BETWEEN_READINGS_US) {
         // Esperar hasta completar el intervalo mínimo
-        int64_t wait_time = 60000 - (current_time - last_pill_reading_time);
+        int64_t wait_time = MIN_TIME_BETWEEN_READINGS_US - (current_time - last_pill_reading_time);
         esp_rom_delay_us(wait_time > 0 ? wait_time : 0);
     }
     
@@ -407,19 +403,19 @@ sensor_state_t medication_hardware_check_pill_presence(void) {
         return SENSOR_ERROR;
     }
     
-    sensor_state_t state = (distance < 5.0) ? OBJECT_PRESENT : OBJECT_NOT_PRESENT;
+    sensor_state_t state = (distance < PILL_DETECTION_THRESHOLD) ? OBJECT_PRESENT : OBJECT_NOT_PRESENT;
     ESP_LOGI(TAG, "Distancia sensor píldoras: %.2f cm - Píldora %s", 
              distance, (state == OBJECT_PRESENT) ? "detectada" : "no detectada");
     
     return state;
 }
 
-// Modificar medication_hardware_check_liquid_presence de forma similar
+// Reemplazar en medication_hardware_check_liquid_presence
 sensor_state_t medication_hardware_check_liquid_presence(void) {
     // Asegurar intervalo mínimo entre lecturas
     int64_t current_time = esp_timer_get_time();
-    if ((current_time - last_liquid_reading_time) < 60000) {
-        int64_t wait_time = 60000 - (current_time - last_liquid_reading_time);
+    if ((current_time - last_liquid_reading_time) < MIN_TIME_BETWEEN_READINGS_US) {
+        int64_t wait_time = MIN_TIME_BETWEEN_READINGS_US - (current_time - last_liquid_reading_time);
         esp_rom_delay_us(wait_time > 0 ? wait_time : 0);
     }
     
@@ -431,16 +427,16 @@ sensor_state_t medication_hardware_check_liquid_presence(void) {
         return SENSOR_ERROR;
     }
     
-    sensor_state_t state = (distance < 10.0) ? OBJECT_PRESENT : OBJECT_NOT_PRESENT;
+    sensor_state_t state = (distance < LIQUID_DETECTION_THRESHOLD) ? OBJECT_PRESENT : OBJECT_NOT_PRESENT;
     ESP_LOGI(TAG, "Distancia sensor líquido: %.2f cm - Recipiente %s", 
              distance, (state == OBJECT_PRESENT) ? "detectado" : "no detectado");
     
     return state;
 }
 
-// Añadir esta nueva función para esperar la presencia del vaso con alertas
+// Reemplazar en wait_for_container_with_alerts
 sensor_state_t wait_for_container_with_alerts(bool is_liquid, uint32_t max_wait_time_ms) {
-    const uint32_t check_interval_ms = 1000; // Verificar cada segundo
+    const uint32_t check_interval_ms = CONTAINER_CHECK_INTERVAL_MS;
     uint32_t elapsed_time = 0;
     sensor_state_t container_state;
     
@@ -476,7 +472,7 @@ sensor_state_t wait_for_container_with_alerts(bool is_liquid, uint32_t max_wait_
     return OBJECT_NOT_PRESENT;
 }
 
-// Modificar la función medication_hardware_dispense para usar la espera activa
+// Reemplazar en medication_hardware_dispense
 esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liquid, uint32_t amount) {
     esp_err_t result = ESP_OK;
     
@@ -492,6 +488,7 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
     
     // Si es líquido, debe ser el compartimento 4
     if (is_liquid) {
+        // Código existente para dispensación de líquidos, no cambia
         if (compartment_number != LIQUID_COMPARTMENT_NUM) {
             ESP_LOGE(TAG, "El medicamento líquido solo puede dispensarse del compartimento 4");
             buzzer_play_pattern(BUZZER_PATTERN_ERROR);
@@ -499,29 +496,22 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
         }
         
         // Esperar hasta 60 segundos (1 minuto) a que se coloque un recipiente para líquido
-        if (wait_for_container_with_alerts(true, 60000) != OBJECT_PRESENT) {
-            // Si después de esperar no hay recipiente, abortamos pero sin error
-            // Solo notificamos como medicamento perdido
+        if (wait_for_container_with_alerts(true, CONTAINER_WAIT_TIMEOUT_MS) != OBJECT_PRESENT) {
             buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_MISSED);
             return ESP_ERR_TIMEOUT;
         }
         
-        // Reproducir sonido de "medicamento listo" una vez detectado el recipiente
         buzzer_play_pattern(BUZZER_PATTERN_CONFIRM);
         
-        // Activar la bomba por la cantidad especificada (en milisegundos)
         ESP_LOGI(TAG, "Dispensando medicamento líquido por %lu ms", (unsigned long)amount);
         result = medication_hardware_pump_start(PUMP_DUTY_CYCLE_MAX, amount);
         
-        // Sonido de confirmación cuando termina
         if (result == ESP_OK) {
-            // El sonido debe reproducirse después de la dispensación
-            vTaskDelay(pdMS_TO_TICKS(amount + 100));  // Agregar pequeño margen
+            vTaskDelay(pdMS_TO_TICKS(amount + 100));
             buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_TAKEN);
         }
-        
     } else {
-        // Es píldora, debe estar en los compartimentos 1-3
+        // Dispensación de píldoras - lógica modificada para dispensación incremental
         if (compartment_number > MAX_PILL_COMPARTMENTS) {
             ESP_LOGE(TAG, "Las píldoras solo pueden dispensarse de los compartimentos 1-3");
             buzzer_play_pattern(BUZZER_PATTERN_ERROR);
@@ -529,32 +519,49 @@ esp_err_t medication_hardware_dispense(uint8_t compartment_number, bool is_liqui
         }
         
         // Esperar hasta 60 segundos a que se coloque un recipiente para píldoras
-        if (wait_for_container_with_alerts(false, 60000) != OBJECT_PRESENT) {
-            // Si después de esperar no hay recipiente, abortamos pero sin error
-            // Solo notificamos como medicamento perdido
+        if (wait_for_container_with_alerts(false, CONTAINER_WAIT_TIMEOUT_MS) != OBJECT_PRESENT) {
             buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_MISSED);
             return ESP_ERR_TIMEOUT;
         }
         
-        // Reproducir sonido de "medicamento listo" una vez detectado el recipiente
         buzzer_play_pattern(BUZZER_PATTERN_CONFIRM);
         
-        // Abrir el compartimento de píldoras
         ESP_LOGI(TAG, "Dispensando %lu píldoras del compartimento %d", (unsigned long)amount, compartment_number);
         
-        // Abrir el compartimento
-        result = medication_hardware_open_compartment(compartment_number);
-        if (result != ESP_OK) {
-            buzzer_play_pattern(BUZZER_PATTERN_ERROR);
-            return result;
+        // Dispensar cada píldora individualmente
+        for (uint32_t i = 0; i < amount; i++) {
+            ESP_LOGI(TAG, "Dispensando píldora %lu de %lu", (unsigned long)(i+1), (unsigned long)amount);
+            
+            // 1. Mover a posición abierta (180°) para liberar la píldora actual
+            mcpwm_timer_t timer;
+            mcpwm_operator_t operator = MCPWM_OPR_A;
+            
+            switch (compartment_number) {
+                case 1: timer = MCPWM_TIMER_0; break;
+                case 2: timer = MCPWM_TIMER_1; break;
+                case 3: timer = MCPWM_TIMER_2; break;
+                default: return ESP_ERR_INVALID_ARG;
+            }
+            
+            // Abrir - girar a 180°
+            ESP_LOGI(TAG, "  Abriendo compartimento para liberar píldora");
+            mcpwm_set_duty_in_us(servo_mcpwm_unit, timer, operator, SERVO_MAX_PULSEWIDTH); // 180°
+            vTaskDelay(PILL_DISPENSE_BASE_TIME / portTICK_PERIOD_MS);
+            
+            // 2. Volver a posición cerrada (0°) para recibir la siguiente píldora
+            ESP_LOGI(TAG, "  Cerrando compartimento para recibir siguiente píldora");
+            mcpwm_set_duty_in_us(servo_mcpwm_unit, timer, operator, SERVO_MIN_PULSEWIDTH); // 0°
+            
+            // Esperar a que la siguiente píldora caiga al hueco
+            vTaskDelay(PILL_DISPENSE_TIME_PER_PILL / portTICK_PERIOD_MS);
+            
+            // Si no es la última píldora, añadir una pequeña pausa entre ciclos
+            if (i < amount - 1) {
+                vTaskDelay(200 / portTICK_PERIOD_MS);
+            }
         }
         
-        // Mantener abierto un tiempo proporcional a la cantidad de píldoras
-        uint32_t open_time = 500 + (amount > 1 ? (amount - 1) * 250 : 0);
-        ESP_LOGI(TAG, "Manteniendo compartimento abierto por %lu ms", (unsigned long)open_time);
-        vTaskDelay(pdMS_TO_TICKS(open_time));
-        
-        // Cerrar el compartimento
+        // Asegurarse de que el servo quede en posición cerrada (0°)
         result = medication_hardware_close_compartment(compartment_number);
         
         // Sonido de confirmación cuando termina

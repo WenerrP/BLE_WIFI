@@ -380,8 +380,7 @@ static void medication_dispenser_task(void *pvParameters) {
             
             // Buscar el horario correspondiente (el más cercano a dispensar)
             medication_schedule_t *active_schedule = NULL;
-            int64_t nearest_time = INT64_MAX;
-            
+
             for (int i = 0; i < medication->schedules_count; i++) {
                 medication_schedule_t *schedule = &medication->schedules[i];
                 
@@ -394,13 +393,12 @@ static void medication_dispenser_task(void *pvParameters) {
                 ESP_LOGI(TAG, "  - Horario %s: próxima=%s, última=%s", 
                         schedule->id, next_time_str, last_time_str);
                 
-                // Verificar si este es el horario que acaba de ser marcado para dispensación
-                if (schedule->next_dispense_time > schedule->last_dispensed_time &&
-                    schedule->next_dispense_time <= current_time &&
-                    schedule->next_dispense_time < nearest_time) {
+                // Verificar si este horario está listo para dispensar
+                // La condición principal es que la última dispensación sea anterior a la próxima programada
+                if (schedule->next_dispense_time > schedule->last_dispensed_time) {
                     active_schedule = schedule;
-                    nearest_time = schedule->next_dispense_time;
                     ESP_LOGI(TAG, "    * Horario seleccionado para dispensación");
+                    break; // Use the first schedule that matches
                 }
             }
             
