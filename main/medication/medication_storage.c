@@ -12,7 +12,7 @@
 #include "../ntp_func.h"  // Para acceder a format_time()
 
 // Define the maximum length for medication ID
-#define MEDICATION_ID_MAX_LEN 64
+
 
 static const char *TAG = "MEDICATION_STORAGE";
 static const char *NVS_NAMESPACE = "medications";
@@ -1209,4 +1209,38 @@ esp_err_t medication_storage_mark_dispensed(const char* med_id, const char* sche
     
     ESP_LOGI(TAG, "Medication %s (schedule %s) marked as dispensed", med->name, schedule_id);
     return ESP_OK;
+}
+
+// Guardar todos los medicamentos en almacenamiento
+esp_err_t medication_storage_save(void) {
+    if (!medications || medications_count <= 0 || !med_nvs_handle) {
+        ESP_LOGW(TAG, "No hay medicamentos para guardar o NVS no inicializado");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Guardando todos los medicamentos en almacenamiento");
+    
+    esp_err_t err = ESP_OK;
+    
+    // Guardar cada medicamento
+    for (int i = 0; i < medications_count; i++) {
+        esp_err_t temp_err = save_medication_to_nvs(&medications[i]);
+        if (temp_err != ESP_OK) {
+            ESP_LOGW(TAG, "Error al guardar medicamento %s: %s", 
+                     medications[i].name, esp_err_to_name(temp_err));
+            err = temp_err;  // Guardar el último error pero continuar con los demás
+        }
+    }
+    
+    // Forzar un commit final para asegurar que todos los cambios se guarden
+    esp_err_t commit_err = nvs_commit(med_nvs_handle);
+    if (commit_err != ESP_OK) {
+        ESP_LOGE(TAG, "Error al hacer commit de los cambios: %s", esp_err_to_name(commit_err));
+        return commit_err;  // Priorizar el error de commit
+    }
+    
+    // Guardar mapeos ID si hubo cambios
+    save_id_mappings_if_changed();
+    
+    return err;
 }

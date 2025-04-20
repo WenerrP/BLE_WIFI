@@ -4,6 +4,7 @@
 #include <esp_err.h>
 #include "cJSON.h"
 
+#define MEDICATION_ID_MAX_LEN 64
 /**
  * @brief Estructura para representar un horario de medicamento
  */
@@ -19,6 +20,7 @@ typedef struct {
     int64_t treatment_end_date;   // Fecha fin del tratamiento (timestamp en ms)
     int64_t next_dispense_time;   // Próxima dispensación programada (timestamp en ms)
     int64_t last_dispensed_time;  // Última dispensación (timestamp en ms)
+    int64_t last_taken_time;       // Última vez que se tomó el medicamento (timestamp en ms)
 } medication_schedule_t;
 
 /**
@@ -87,5 +89,12 @@ medication_t* medication_storage_check_dispense(int64_t current_time);
  * @return esp_err_t ESP_OK si se actualizó correctamente
  */
 esp_err_t medication_storage_mark_dispensed(const char* med_id, const char* schedule_id);
+
+/**
+ * @brief Guarda el estado actual del almacenamiento de medicamentos
+ * 
+ * @return esp_err_t ESP_OK si se guardó correctamente
+ */
+esp_err_t medication_storage_save(void);
 
 #endif // MEDICATION_STORAGE_H

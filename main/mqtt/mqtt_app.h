@@ -17,7 +17,8 @@
 #define MQTT_TOPIC_DEVICE_STATUS     "/device/status" 
 #define MQTT_TOPIC_DEVICE_TELEMETRY  "/device/telemetry"
 #define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
-#define MQTT_TOPIC_MED_CONFIRMATION  "/device/med_confirmation"  // Nuevo tópico para confirmaciones
+#define MQTT_TOPIC_MED_CONFIRMATION  "/device/med_confirmation"
+#define MQTT_TOPIC_MEDICATION_TAKEN  "/device/medication_taken"
 
 /**
  * @brief Inicia el módulo MQTT completo (conexión, suscripciones, etc.)

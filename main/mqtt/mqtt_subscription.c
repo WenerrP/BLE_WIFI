@@ -326,5 +326,10 @@ esp_err_t mqtt_sub_init(void) {
         ret = mqtt_sub_subscribe(MQTT_TOPIC_DEVICE_STATUS, 1);
     }
     
+    // Suscribirse al tópico de medicamentos tomados
+    if (ret == ESP_OK) {
+        ret = mqtt_sub_subscribe(MQTT_TOPIC_MEDICATION_TAKEN, 1);
+    }
+    
     return ret;
 }

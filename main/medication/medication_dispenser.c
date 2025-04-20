@@ -24,6 +24,176 @@ static bool auto_dispense_enabled = true;
 static void medication_dispenser_task(void *pvParameters);
 static void check_timer_callback(void* arg);
 static void publish_med_notification(medication_t *medication, medication_schedule_t *schedule);
+void medication_reminder_callback(void *arg); // modificado de static a público
+void schedule_medication_reminders(void); // nueva función para programar los recordatorios
+
+// Añadir este prototipo al inicio junto con los otros
+esp_err_t medication_dispenser_confirm_taken(const char* medication_id, const char* schedule_id);
+
+// Añadir esta estructura para gestionar temporizadores de recordatorios
+typedef struct {
+    esp_timer_handle_t timer_handle;
+    char medication_id[MEDICATION_ID_MAX_LEN];
+    char schedule_id[MEDICATION_ID_MAX_LEN];
+} reminder_timer_t;
+
+// Arreglo para almacenar los temporizadores de recordatorios activos
+#define MAX_REMINDER_TIMERS 10
+static reminder_timer_t reminder_timers[MAX_REMINDER_TIMERS] = {0};
+static int active_reminder_count = 0;
+
+// Tiempo de anticipación para el recordatorio (en milisegundos)
+#define REMINDER_ADVANCE_TIME (5 * 60 * 1000)  // 5 minutos antes
+
+// Esta función programa recordatorios para todos los medicamentos
+void schedule_medication_reminders(void) {
+    ESP_LOGI(TAG, "Programando recordatorios para medicamentos");
+    
+    // Limpiar recordatorios anteriores
+    for (int i = 0; i < active_reminder_count; i++) {
+        if (reminder_timers[i].timer_handle != NULL) {
+            esp_timer_stop(reminder_timers[i].timer_handle);
+            esp_timer_delete(reminder_timers[i].timer_handle);
+            reminder_timers[i].timer_handle = NULL;
+        }
+    }
+    active_reminder_count = 0;
+    
+    // Obtener el tiempo actual
+    int64_t current_time = get_time_ms();
+    
+    // Obtener todos los medicamentos
+    int count;
+    medication_t *meds = medication_storage_get_all_medications(&count);
+    
+    if (!meds || count == 0) {
+        ESP_LOGI(TAG, "No hay medicamentos para programar recordatorios");
+        return;
+    }
+    
+    // Iterar sobre todos los medicamentos y sus horarios
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < meds[i].schedules_count; j++) {
+            medication_schedule_t *schedule = &meds[i].schedules[j];
+            
+            // Verificar si el próximo tiempo de dispensación es en el futuro
+            if (schedule->next_dispense_time > current_time) {
+                // Calcular cuándo debe activarse el recordatorio (5 minutos antes)
+                int64_t reminder_time = schedule->next_dispense_time - REMINDER_ADVANCE_TIME;
+                
+                // Si el tiempo ya pasó, programar para la próxima vez
+                if (reminder_time <= current_time) {
+                    ESP_LOGI(TAG, "El tiempo de recordatorio ya pasó, se programará para el siguiente ciclo");
+                    continue;
+                }
+                
+                // Comprobar si hay espacio para un nuevo recordatorio
+                if (active_reminder_count >= MAX_REMINDER_TIMERS) {
+                    ESP_LOGW(TAG, "Alcanzado el límite máximo de recordatorios");
+                    break;
+                }
+                
+                // Crear contexto para el recordatorio
+                medication_schedule_t *reminder_ctx = malloc(sizeof(medication_schedule_t));
+                if (!reminder_ctx) {
+                    ESP_LOGE(TAG, "Error de memoria al crear contexto de recordatorio");
+                    continue;
+                }
+                memcpy(reminder_ctx, schedule, sizeof(medication_schedule_t));
+                
+                // Crear temporizador para el recordatorio
+                esp_timer_create_args_t timer_args = {
+                    .callback = medication_reminder_callback,
+                    .arg = reminder_ctx,
+                    .name = "med_reminder"
+                };
+                
+                esp_timer_handle_t timer_handle;
+                esp_err_t ret = esp_timer_create(&timer_args, &timer_handle);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error al crear temporizador para recordatorio: %s", esp_err_to_name(ret));
+                    free(reminder_ctx);
+                    continue;
+                }
+                
+                // Calcular cuánto tiempo falta (en microsegundos)
+                int64_t time_to_reminder_us = (reminder_time - current_time) * 1000;
+                
+                // Iniciar el temporizador
+                ret = esp_timer_start_once(timer_handle, time_to_reminder_us);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error al iniciar temporizador para recordatorio: %s", esp_err_to_name(ret));
+                    esp_timer_delete(timer_handle);
+                    free(reminder_ctx);
+                    continue;
+                }
+                
+                // Guardar información del temporizador
+                reminder_timers[active_reminder_count].timer_handle = timer_handle;
+                strncpy(reminder_timers[active_reminder_count].medication_id, meds[i].id, MEDICATION_ID_MAX_LEN-1);
+                strncpy(reminder_timers[active_reminder_count].schedule_id, schedule->id, MEDICATION_ID_MAX_LEN-1);
+                active_reminder_count++;
+                
+                char time_str[32];
+                format_time(reminder_time, time_str, sizeof(time_str));
+                ESP_LOGI(TAG, "Recordatorio programado para %s: %s (medicamento: %s)", 
+                         time_str, schedule->id, meds[i].name);
+            }
+        }
+    }
+    
+    ESP_LOGI(TAG, "Total de recordatorios programados: %d", active_reminder_count);
+}
+
+// Modificar el callback para que libere la memoria del contexto
+void medication_reminder_callback(void *arg) {
+    medication_schedule_t *schedule = (medication_schedule_t *)arg;
+    
+    // Necesitamos encontrar el medicamento al que pertenece este horario
+    int count;
+    medication_t *meds = medication_storage_get_all_medications(&count);
+    const char *med_name = "desconocido"; // Valor por defecto
+    
+    // Buscar el medicamento que contiene este horario
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < meds[i].schedules_count; j++) {
+            if (strcmp(meds[i].schedules[j].id, schedule->id) == 0) {
+                med_name = meds[i].name;
+                break;
+            }
+        }
+    }
+    
+    ESP_LOGI(TAG, "⏰ RECORDATORIO DE MEDICAMENTO: %s (horario %s)", med_name, schedule->id);
+    
+    // Reproducir alerta de recordatorio
+    buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
+    
+    // Reproducir una segunda vez para asegurar que se escuche
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
+    
+    // Publicar notificación MQTT para recordatorio
+    cJSON *root = cJSON_CreateObject();
+    if (root) {
+        cJSON_AddStringToObject(root, "type", "medication_reminder");
+        cJSON_AddStringToObject(root, "scheduleId", schedule->id);
+        cJSON_AddStringToObject(root, "medicationName", med_name);
+        cJSON_AddNumberToObject(root, "reminderTime", get_time_ms());
+        cJSON_AddNumberToObject(root, "dispenseTime", schedule->next_dispense_time);
+        
+        char *json_str = cJSON_Print(root);
+        if (json_str) {
+            mqtt_app_publish(MQTT_TOPIC_DEVICE_TELEMETRY, json_str, 0, 1, false);
+            free(json_str);
+        }
+        
+        cJSON_Delete(root);
+    }
+    
+    // Liberar la memoria del contexto
+    free(arg);
+}
 
 // Función para verificar si el tiempo está sincronizado correctamente
 static bool is_time_reliable(void) {
@@ -155,6 +325,10 @@ esp_err_t medication_dispenser_init(void) {
 
     dispenser_initialized = true;
     auto_dispense_enabled = true;
+    
+    // Programar recordatorios iniciales
+    schedule_medication_reminders();
+    
     ESP_LOGI(TAG, "Dispensador inicializado correctamente");
     return ESP_OK;
 }
@@ -204,6 +378,15 @@ static void check_timer_callback(void* arg) {
         ESP_LOGI(TAG, "Verificando medicamentos perdidos...");
         check_missed_medications();
         missed_counter = 0;
+    }
+    
+    // Reprogramar recordatorios (cada 10 minutos - 20 ciclos de 30 segundos)
+    static int reminder_counter = 0;
+    reminder_counter++;
+    if (reminder_counter >= 20) {
+        ESP_LOGI(TAG, "Reprogramando recordatorios...");
+        schedule_medication_reminders();
+        reminder_counter = 0;
     }
     
     // Notificar a la tarea para que verifique los medicamentos a dispensar
@@ -310,6 +493,75 @@ esp_err_t medication_dispenser_manual_dispense(const char* medication_id, const 
     
     ESP_LOGI(TAG, "Medicamento %s dispensado manualmente", med->name);
     return ESP_OK;
+}
+
+// Implementar la función 
+esp_err_t medication_dispenser_confirm_taken(const char* medication_id, const char* schedule_id) {
+    if (!medication_id || !schedule_id) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Recibida confirmación de medicamento tomado: %s, horario: %s", 
+             medication_id, schedule_id);
+    
+    // Obtener el medicamento
+    medication_t *med = medication_storage_get_medication(medication_id);
+    if (!med) {
+        ESP_LOGW(TAG, "Medicamento no encontrado: %s", medication_id);
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Buscar el horario específico
+    medication_schedule_t *schedule = NULL;
+    for (int i = 0; i < med->schedules_count; i++) {
+        if (strcmp(med->schedules[i].id, schedule_id) == 0) {
+            schedule = &med->schedules[i];
+            break;
+        }
+    }
+    
+    if (!schedule) {
+        ESP_LOGW(TAG, "Horario no encontrado: %s", schedule_id);
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    int64_t current_time = get_time_ms();
+    
+    // Solo actualizamos si el medicamento ya fue dispensado
+    if (schedule->last_dispensed_time >= schedule->next_dispense_time) {
+        // Publicar confirmación MQTT
+        cJSON *root = cJSON_CreateObject();
+        if (root) {
+            cJSON_AddStringToObject(root, "type", "medication_taken_confirmed");
+            cJSON_AddStringToObject(root, "medicationId", medication_id);
+            cJSON_AddStringToObject(root, "name", med->name);
+            cJSON_AddStringToObject(root, "scheduleId", schedule_id);
+            cJSON_AddNumberToObject(root, "timestamp", current_time);
+            
+            char *json_str = cJSON_Print(root);
+            if (json_str) {
+                mqtt_app_publish(MQTT_TOPIC_DEVICE_TELEMETRY, json_str, 0, 1, false);
+                free(json_str);
+            }
+            cJSON_Delete(root);
+        }
+        
+        // Actualizar el campo last_taken_time
+        schedule->last_taken_time = current_time;
+        
+        // Guardar cambios en almacenamiento
+        esp_err_t ret = medication_storage_save();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Error al guardar confirmación: %s", esp_err_to_name(ret));
+            return ret;
+        }
+        
+        ESP_LOGI(TAG, "✅ Confirmación de medicamento tomado registrada: %s", med->name);
+        return ESP_OK;
+    } else {
+        ESP_LOGW(TAG, "⚠️ El medicamento %s no ha sido dispensado todavía", med->name);
+        return ESP_ERR_INVALID_STATE;
+    }
 }
 
 // Tarea principal del dispensador
@@ -443,39 +695,6 @@ static void medication_dispenser_task(void *pvParameters) {
     }
 }
 
-// Buscar funciones que manejen recordatorios y modificarlas para usar el buzzer
-// Por ejemplo, una función que envíe recordatorios podría modificarse así:
-
-void medication_reminder_callback(void *arg) {
-    medication_schedule_t *schedule = (medication_schedule_t *)arg;
-    
-    // Necesitamos encontrar el medicamento al que pertenece este horario
-    int count;
-    medication_t *meds = medication_storage_get_all_medications(&count);
-    const char *med_name = "desconocido"; // Valor por defecto
-    
-    // Buscar el medicamento que contiene este horario
-    for (int i = 0; i < count; i++) {
-        for (int j = 0; j < meds[i].schedules_count; j++) {
-            if (strcmp(meds[i].schedules[j].id, schedule->id) == 0) {
-                med_name = meds[i].name;
-                break;
-            }
-        }
-    }
-    
-    ESP_LOGI(TAG, "Recordatorio de medicamento: %s (horario %s)", med_name, schedule->id);
-    
-    // Reproducir alerta de recordatorio
-    buzzer_play_pattern(BUZZER_PATTERN_MEDICATION_READY);
-    
-    // Si hay una función que muestre mensajes en pantalla, llamarla aquí
-    
-    // Si hay un LED de notificación, activarlo aquí
-    
-    // Resto de la lógica de recordatorio...
-}
-
 // Función que verifica medicamentos perdidos/no tomados
 void check_missed_medications(void) {
     ESP_LOGI(TAG, "Verificando medicamentos no tomados...");
@@ -497,15 +716,25 @@ void check_missed_medications(void) {
         for (int j = 0; j < meds[i].schedules_count; j++) {
             medication_schedule_t *schedule = &meds[i].schedules[j];
             
-            // Verificamos si hay un medicamento que debió dispensarse hace más de 30 minutos
-            // y aún no se ha marcado como dispensado o tomado
+            // Tiempo después del cual consideramos que un medicamento está "perdido" (30 minutos)
             int64_t threshold_time = 30 * 60 * 1000; // 30 minutos en ms
-            bool is_missed = (schedule->next_dispense_time < current_time - threshold_time) &&
-                             (schedule->last_dispensed_time < schedule->next_dispense_time);
             
-            if (is_missed) {
-                ESP_LOGW(TAG, "¡Medicamento no tomado detectado! %s, horario %s", 
-                         meds[i].name, schedule->id);
+            bool should_have_been_dispensed = (schedule->next_dispense_time < current_time - threshold_time);
+            bool was_dispensed = (schedule->last_dispensed_time >= schedule->next_dispense_time);
+            bool was_taken = (schedule->last_taken_time >= schedule->last_dispensed_time);
+            
+            // Un medicamento se considera 'never_dispensed' si debió dispensarse pero no se hizo
+            bool never_dispensed = should_have_been_dispensed && !was_dispensed;
+            
+            // Un medicamento se considera 'dispensed_not_taken' si fue dispensado pero no tomado
+            bool dispensed_not_taken = should_have_been_dispensed && was_dispensed && !was_taken;
+            
+            // Si alguna de las condiciones se cumple, hay un problema que reportar
+            if (never_dispensed || dispensed_not_taken) {
+                const char* status = never_dispensed ? "never_dispensed" : "dispensed_not_taken";
+                
+                ESP_LOGW(TAG, "¡Medicamento no tomado detectado! %s, horario %s (%s)", 
+                         meds[i].name, schedule->id, status);
                 
                 // Convertir a formato legible
                 char next_time_str[32];
@@ -524,8 +753,14 @@ void check_missed_medications(void) {
                     cJSON_AddStringToObject(root, "medicationId", meds[i].id);
                     cJSON_AddStringToObject(root, "name", meds[i].name);
                     cJSON_AddStringToObject(root, "scheduleId", schedule->id);
+                    cJSON_AddStringToObject(root, "status", status);
                     cJSON_AddNumberToObject(root, "scheduledTime", schedule->next_dispense_time);
                     cJSON_AddNumberToObject(root, "currentTime", current_time);
+                    
+                    // Solo añadir estos datos si es relevante
+                    if (dispensed_not_taken) {
+                        cJSON_AddNumberToObject(root, "dispensedTime", schedule->last_dispensed_time);
+                    }
                     
                     char *json_str = cJSON_Print(root);
                     if (json_str) {
@@ -535,10 +770,6 @@ void check_missed_medications(void) {
                     
                     cJSON_Delete(root);
                 }
-                
-                // Opcionalmente, marcar como perdido en el almacenamiento
-                // (si tienes esa función implementada)
-                // medication_storage_mark_missed(meds[i].id, schedule->id);
             }
         }
     }
