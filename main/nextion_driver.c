@@ -544,6 +544,18 @@ void nextion_time_updater_stop(void) {
  * @brief Actualiza el nombre de usuario mostrado en la pantalla
  */
 void nextion_time_updater_set_username(const char *user_name) {
+    // Verificar inicialización primero
+    if (!nextion_initialized) {
+        ESP_LOGI(TAG, "Nextion no inicializado, inicializando ahora...");
+        if (!nextion_init()) {
+            ESP_LOGE(TAG, "Error inicializando Nextion, no se mostrará el nombre");
+            return;
+        }
+    }
+
+    // Logging para depuración
+    ESP_LOGI(TAG, "Actualizando nombre en pantalla: %s", user_name ? user_name : "(vacío)");
+    
     // Liberar memoria anterior
     if (current_user_name != NULL) {
         free(current_user_name);
@@ -555,6 +567,10 @@ void nextion_time_updater_set_username(const char *user_name) {
         current_user_name = strdup(user_name);
         
         // Actualizar directamente en la pantalla
-        nextion_set_component_value("t2", current_user_name);
+        if (nextion_set_component_value("t2", current_user_name)) {
+            ESP_LOGI(TAG, "Nombre actualizado correctamente en pantalla");
+        } else {
+            ESP_LOGE(TAG, "Error al actualizar nombre en pantalla");
+        }
     }
 }

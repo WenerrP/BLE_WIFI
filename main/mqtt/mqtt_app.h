@@ -19,6 +19,12 @@
 #define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
 #define MQTT_TOPIC_MED_CONFIRMATION  "/device/med_confirmation"
 #define MQTT_TOPIC_MEDICATION_TAKEN  "/device/medication_taken"
+#define MQTT_TOPIC_PATIENT_INFO      "/device/name"
+
+// Añadir estas definiciones
+
+// Callback para información del paciente
+typedef void (*patient_info_callback_t)(const char *patient_name, const char *patient_id);
 
 /**
  * @brief Inicia el módulo MQTT completo (conexión, suscripciones, etc.)
@@ -120,5 +126,19 @@ void mqtt_app_process_led_command(char command);
  * @return esp_err_t ESP_OK si la publicación fue exitosa
  */
 esp_err_t mqtt_app_publish_med_confirmation(bool success, const char* message, int64_t timestamp);
+
+/**
+ * @brief Registra un callback para recibir información del paciente
+ * @param callback Función que será llamada cuando se reciba información del paciente
+ */
+void mqtt_set_patient_info_callback(patient_info_callback_t callback);
+
+/**
+ * @brief Maneja la información del paciente recibida
+ * @param patient_name Nombre del paciente
+ * @param patient_id ID del paciente
+ */
+void mqtt_app_handle_patient_info(const char *patient_name, const char *patient_id);
+
 
 #endif /* MQTT_APP_H */

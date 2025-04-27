@@ -49,15 +49,9 @@ static int64_t get_current_time_ms(void);
 static char* create_short_key(const char* medication_id) {
     static char short_key[16];  // Buffer para almacenar la clave corta
     
-    // Opciones para generar claves cortas:
-    
     // Opción 1: Usar un contador simple (med_0, med_1, etc.)
     snprintf(short_key, sizeof(short_key), "med_%d", id_counter++);
     
-    // Opción 2: Usar los primeros caracteres del ID
-    // strncpy(short_key, medication_id, 10);
-    // short_key[10] = '\0';
-    // strncat(short_key, "_m", 2);
     
     return short_key;  // Asegurar que se retorne el valor
 }

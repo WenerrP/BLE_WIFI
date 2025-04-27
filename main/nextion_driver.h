@@ -83,4 +83,9 @@ void nextion_set_low_power_mode(bool enable);
  */
 void nextion_set_update_interval(uint32_t interval_ms);
 
+/**
+ * @brief Actualiza el nombre de usuario mostrado en la pantalla
+ */
+void nextion_time_updater_set_username(const char *user_name);
+
 #endif // NEXTION_DRIVER_H

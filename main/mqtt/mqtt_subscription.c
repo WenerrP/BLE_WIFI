@@ -14,6 +14,7 @@
 #include "medication/medication_storage.h" // Incluir el encabezado de gestión de medicamentos
 #include "medication/medication_dispenser.h"
 #include "../ntp_func.h"  // Para acceder a las funciones de tiempo NTP
+#include "../nextion_driver.h"
 
 static const char *TAG = "MQTT_SUB";
 
@@ -48,6 +49,50 @@ char* mqtt_sub_get_device_ip(void) {
     device_ip_buffer[sizeof(device_ip_buffer) - 1] = '\0';
     
     return device_ip_buffer;
+}
+
+/**
+ * @brief Procesa un mensaje JSON con información del paciente
+ * 
+ * @param json_str Cadena JSON con la información del paciente
+ * @return esp_err_t ESP_OK si se procesó correctamente
+ */
+static esp_err_t process_patient_info(const char *json_str) {
+    if (!json_str) {
+        ESP_LOGE(TAG, "JSON de paciente nulo");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Procesando información de paciente: %s", json_str);
+    
+    // Parsear el JSON
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Error parseando JSON de paciente: %s", cJSON_GetErrorPtr());
+        return ESP_FAIL;
+    }
+    
+    // Extraer el nombre del paciente
+    cJSON *patient_name = cJSON_GetObjectItem(root, "patientName");
+    if (!patient_name || !cJSON_IsString(patient_name)) {
+        ESP_LOGW(TAG, "Nombre de paciente no encontrado o inválido");
+        cJSON_Delete(root);
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Extraer el ID del paciente (opcional)
+    cJSON *patient_id = cJSON_GetObjectItem(root, "patientId");
+    
+    // Registrar la información recibida
+    ESP_LOGI(TAG, "Paciente: %s, ID: %s", 
+             patient_name->valuestring,
+             (patient_id && cJSON_IsString(patient_id)) ? patient_id->valuestring : "N/A");
+    
+    // Actualizar el nombre en Nextion usando la función existente
+    nextion_time_updater_set_username(patient_name->valuestring);
+    
+    cJSON_Delete(root);
+    return ESP_OK;
 }
 
 void process_json_command(const char* json_str) {
@@ -125,7 +170,7 @@ void process_json_command(const char* json_str) {
     }
     
     const char *type = type_obj->valuestring;
-    
+
     // Respuesta detallada a ping (solo si no estamos usando la respuesta rápida)
 #if !MQTT_USE_FAST_PING_RESPONSE
     if (strcmp(type, "ping") == 0) {
@@ -329,6 +374,11 @@ esp_err_t mqtt_sub_init(void) {
     // Suscribirse al tópico de medicamentos tomados
     if (ret == ESP_OK) {
         ret = mqtt_sub_subscribe(MQTT_TOPIC_MEDICATION_TAKEN, 1);
+    }
+
+    // Suscribirse al tópico de información del paciente
+    if (ret == ESP_OK) {
+        ret = mqtt_sub_subscribe(MQTT_TOPIC_PATIENT_INFO, 1);
     }
     
     return ret;

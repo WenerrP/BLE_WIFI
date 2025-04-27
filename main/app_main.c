@@ -51,9 +51,42 @@ static QueueHandle_t gpio_evt_queue = NULL;
 static bool button_pressed_flag = false;
 static bool gpio_interrupt_enabled = true;
 
+// Añadir después de las variables globales existentes:
+static char global_patient_name[64] = ""; // Valor por defecto
+static char global_patient_id[32] = "N/A";
+
 // Declarar las funciones de callback primero
 static void wifi_connection_callback(char *ip);
 static void wifi_failure_callback(void);
+
+// Añadir después de las declaraciones de los callbacks
+static void display_update_task(void *pvParameters);
+
+// Añadir esta función que será el callback para info de pacientes
+static void handle_patient_info(const char *patient_name, const char *patient_id) {
+    ESP_LOGI(TAG, "Recibida información de paciente: %s (ID: %s)", 
+             patient_name ? patient_name : "(sin nombre)",
+             patient_id ? patient_id : "N/A");
+             
+    // Guardar en las variables globales
+    if (patient_name) {
+        strncpy(global_patient_name, patient_name, sizeof(global_patient_name) - 1);
+        global_patient_name[sizeof(global_patient_name) - 1] = '\0';
+        
+        // Actualizar nombre en la pantalla DIRECTAMENTE con el valor recibido
+        ESP_LOGI(TAG, "Actualizando nombre en pantalla a: %s", patient_name);
+        nextion_time_updater_set_username(patient_name);  // Usar directamente patient_name
+    }
+    
+    if (patient_id) {
+        strncpy(global_patient_id, patient_id, sizeof(global_patient_id) - 1);
+        global_patient_id[sizeof(global_patient_id) - 1] = '\0';
+    }
+    
+    // Actualizar nombre en la pantalla
+    ESP_LOGI(TAG, "Actualizando nombre en pantalla a: %s", patient_name);
+    nextion_time_updater_set_username(patient_name);
+}
 
 // Función para configurar los LEDs
 static void configure_leds(void)
@@ -268,7 +301,7 @@ static void wifi_connection_callback(char *ip) {
         nextion_start_rx_task();
         
         // Iniciar actualización periódica de fecha/hora
-        nextion_time_updater_start("MediDispenser");  // Puedes cambiar el nombre de usuario
+        nextion_time_updater_start("");  // Puedes cambiar el nombre de usuario
         
         ESP_LOGI(TAG, "Pantalla Nextion inicializada correctamente");
     }
@@ -280,11 +313,18 @@ static void wifi_connection_callback(char *ip) {
     ESP_LOGI(TAG, "Iniciando MQTT");
     mqtt_app_init();
     
+    // Registrar callback para información del paciente
+    mqtt_set_patient_info_callback(handle_patient_info);
+    
     ESP_LOGI(TAG, "Inicializando dispensador de medicamentos");
     medication_dispenser_init();
     
     // Publicar estado cuando todo esté listo
     publish_device_status("online");
+
+    // Añadir creación de esta tarea en wifi_connection_callback
+    // (después de inicializar Nextion):
+    xTaskCreate(display_update_task, "display_update", 4096, NULL, 3, NULL);
 }
 
 // Modificar el callback de WiFi para manejar fallos sin límite de reintentos
@@ -307,6 +347,26 @@ static void wifi_failure_callback(void) {
     
     // Simplemente loguear el intento sin detener el WiFi
     ESP_LOGW(TAG, "Fallo de conexión WiFi, intento %d. Continuando reconexión...", wifi_retry_count);
+}
+
+// Opcional: Añadir una tarea que actualice la pantalla periódicamente
+static void display_update_task(void *pvParameters) {
+    TickType_t last_update_time = xTaskGetTickCount();
+    TickType_t current_time;
+    
+    while (1) {
+        current_time = xTaskGetTickCount();
+        
+        // Actualizar cada 5 segundos
+        if (current_time - last_update_time > pdMS_TO_TICKS(2000)) {
+            // Actualizar nombre en pantalla
+            nextion_time_updater_set_username(global_patient_name);
+            
+            last_update_time = current_time;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }
 
 // Modificación en app_main para configurar el botón correctamente

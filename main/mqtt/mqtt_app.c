@@ -13,6 +13,49 @@ static const char *TAG = "MQTT_APP";
 static int current_active_led = 0; // 0=ninguno, 1=A, 2=B, 3=C
 static bool mqtt_initialized = false;
 
+// Callback para manejar la información del paciente
+static void (*patient_info_callback)(const char *patient_name, const char *patient_id) = NULL;
+
+// Función para registrar el callback
+void mqtt_set_patient_info_callback(patient_info_callback_t callback) {
+    patient_info_callback = callback;
+}
+
+// Función para que mqtt_connection.c pueda invocar el callback
+void mqtt_app_process_patient_info(const char *json_str) {
+    if (!json_str || !patient_info_callback) {
+        ESP_LOGW(TAG, "No se puede procesar info del paciente: %s", 
+                 !json_str ? "JSON nulo" : "Callback no registrado");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Procesando JSON de paciente: %s", json_str);
+    
+    // Parsear el JSON
+    cJSON *root = cJSON_Parse(json_str);
+    if (!root) {
+        ESP_LOGE(TAG, "Error parseando JSON de paciente");
+        return;
+    }
+    
+    // Extraer el nombre y ID
+    cJSON *name_obj = cJSON_GetObjectItem(root, "patientName");
+    cJSON *id_obj = cJSON_GetObjectItem(root, "patientId");
+    
+    const char *name = (name_obj && cJSON_IsString(name_obj)) ? name_obj->valuestring : NULL;
+    const char *id = (id_obj && cJSON_IsString(id_obj)) ? id_obj->valuestring : NULL;
+    
+    // Invocar el callback con la información extraída
+    if (name) {
+        ESP_LOGI(TAG, "LLAMANDO A CALLBACK con nombre: %s", name);
+        patient_info_callback(name, id ? id : "N/A");
+    } else {
+        ESP_LOGW(TAG, "No se encontró campo patientName en el JSON");
+    }
+    
+    cJSON_Delete(root);
+}
+
 // Declaración externa de la función real en app_main.c
 extern void process_led_command(char command);
 
@@ -84,5 +127,12 @@ void mqtt_app_start(void) {
         mqtt_app_init();
     } else {
         ESP_LOGW(TAG, "MQTT ya está inicializado");
+    }
+}
+
+// Función para que mqtt_connection.c pueda acceder al callback:
+void mqtt_app_handle_patient_info(const char *patient_name, const char *patient_id) {
+    if (patient_info_callback != NULL) {
+        patient_info_callback(patient_name, patient_id);
     }
 }
