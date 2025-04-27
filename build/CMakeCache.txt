@@ -23,12 +23,6 @@ BLE_WIFI_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 BLE_WIFI_SOURCE_DIR:STATIC=C:/Users/wener/BLE_WIFI
 
-//No help, variable specified on the command line.
-CCACHE_ENABLE:UNINITIALIZED=1
-
-//Path to a program.
-CCACHE_FOUND:FILEPATH=C:/Espressif/tools/tools/ccache/4.10.2/ccache-4.10.2-windows-x86_64/ccache.exe
-
 //Path to a program.
 CMAKE_ADDR2LINE:FILEPATH=C:/Espressif/tools/tools/xtensa-esp-elf/esp-13.2.0_20240530/xtensa-esp-elf/bin/xtensa-esp32-elf-addr2line.exe
 
@@ -360,9 +354,6 @@ Mbed TLS_IS_TOP_LEVEL:STATIC=OFF
 
 //Value Computed by CMake
 Mbed TLS_SOURCE_DIR:STATIC=C:/Users/wener/esp/v5.3.2/esp-idf/components/mbedtls/mbedtls
-
-//No help, variable specified on the command line.
-PYTHON:UNINITIALIZED=c:\Espressif\tools\python_env\idf5.3_py3.11_env\Scripts\python.exe
 
 //No help, variable specified on the command line.
 PYTHON_DEPS_CHECKED:UNINITIALIZED=1

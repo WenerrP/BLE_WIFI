@@ -26,6 +26,7 @@
 #include "medication/medication_dispenser.h"
 #include "ntp_func.h"
 #include "buzzer_driver.h"
+#include "nextion_driver.h" // Ensure this header includes the declaration for nextion_time_updater_start
 
 #define LED_GPIO_PIN_A 2
 #define LED_GPIO_PIN_B 19
@@ -257,6 +258,20 @@ static void wifi_connection_callback(char *ip) {
     char time_buf[64];
     format_current_time(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S");
     ESP_LOGI(TAG, "Hora actual (posiblemente aproximada): %s", time_buf);
+    
+    // Inicializar pantalla Nextion - AÑADIR ESTAS LÍNEAS
+    ESP_LOGI(TAG, "Inicializando pantalla Nextion");
+    if (!nextion_init()) {
+        ESP_LOGE(TAG, "Error al inicializar pantalla Nextion");
+    } else {
+        // Iniciar tarea de recepción de datos desde Nextion
+        nextion_start_rx_task();
+        
+        // Iniciar actualización periódica de fecha/hora
+        nextion_time_updater_start("MediDispenser");  // Puedes cambiar el nombre de usuario
+        
+        ESP_LOGI(TAG, "Pantalla Nextion inicializada correctamente");
+    }
     
     // Inicializar sistemas
     ESP_LOGI(TAG, "Inicializando almacenamiento de medicamentos");
