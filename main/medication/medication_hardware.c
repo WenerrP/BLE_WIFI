@@ -13,6 +13,7 @@
 static const char *TAG = "MED_HARDWARE";
 
 // Configuración de pines
+
 #define SERVO_PIN_1      33  // Compartimento 1 - píldoras
 #define SERVO_PIN_2      32  // Compartimento 2 - píldoras
 #define SERVO_PIN_3      22  // Compartimento 3 - píldoras
