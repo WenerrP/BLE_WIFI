@@ -6,6 +6,7 @@
 
 #include "mqtt_manager_config.h"
 #include "mqtt_app.h"          // Para usar las constantes de tópicos MQTT
+
 #include "esp_log.h"
 #include "esp_event.h"
 #include "mqtt_client.h"
@@ -16,6 +17,11 @@
 #include "esp_mac.h"           // Para ESP_MAC_WIFI_STA
 #include "mqtt_connection.h"   // Incluir su propio encabezado
 #include "mqtt_subscription.h" // Para process_json_command
+
+// Añadir esta declaración al principio:
+// Callback para manejo de información del paciente
+typedef void (*patient_info_callback_t)(const char *patient_name, const char *patient_id);
+static patient_info_callback_t patient_info_cb = NULL;
 
 static const char *TAG = "MQTT_CONNECTION";
 static esp_mqtt_client_handle_t client = NULL;
@@ -130,6 +136,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             
             // Suscribirnos a los tópicos relevantes utilizando nuestra nomenclatura estandarizada
             esp_mqtt_client_subscribe(client, MQTT_TOPIC_DEVICE_COMMANDS, 1);
+            esp_mqtt_client_subscribe(client, MQTT_TOPIC_PATIENT_INFO, 1); // Añadir esta línea
             
             // Publicar estado online con JSON inmediatamente al conectar
             cJSON *online_json = cJSON_CreateObject();
@@ -182,18 +189,32 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
             
-            // Crear una copia terminada en NULL del mensaje
-            char *data_copy = malloc(event->data_len + 1);
-            if (data_copy) {
-                memcpy(data_copy, event->data, event->data_len);
-                data_copy[event->data_len] = '\0';
+            // Crear una copia del tópico y los datos con terminación nula
+            char topic_copy[128];
+            char *data_copy = NULL;
+            
+            if (event->topic_len < sizeof(topic_copy)) {
+                memcpy(topic_copy, event->topic, event->topic_len);
+                topic_copy[event->topic_len] = '\0';
                 
-                // Procesar como JSON para cualquier tópico relacionado con comandos
-                if (strncmp(event->topic, MQTT_TOPIC_DEVICE_COMMANDS, strlen(MQTT_TOPIC_DEVICE_COMMANDS)) == 0) {
-                    process_json_command(data_copy);
+                data_copy = malloc(event->data_len + 1);
+                if (data_copy) {
+                    memcpy(data_copy, event->data, event->data_len);
+                    data_copy[event->data_len] = '\0';
+                    
+                    // Procesar mensaje según el tópico
+                    if (strcmp(topic_copy, MQTT_TOPIC_PATIENT_INFO) == 0) {
+                        ESP_LOGI(TAG, "Mensaje de información de paciente recibido");
+                        mqtt_app_process_patient_info(data_copy);
+                    }
+                    else if (strcmp(topic_copy, MQTT_TOPIC_DEVICE_COMMANDS) == 0) {
+                        // Procesar comandos del dispositivo
+                        process_json_command(data_copy);
+                    }
+                    // ... otros tópicos ...
+                    
+                    free(data_copy);
                 }
-                
-                free(data_copy);
             }
             break;
             
@@ -207,8 +228,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
     }
 }
-
-// Implementando las funciones públicas del API
 
 // Función para verificar la conexión
 bool mqtt_connect_is_connected(void) {

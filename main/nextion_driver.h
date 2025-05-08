@@ -12,11 +12,11 @@
 #include "esp_log.h"
 
 // Definiciones para la comunicación con Nextion
-#define NEXTION_UART_NUM           UART_NUM_1    // Puerto UART a usar
+#define NEXTION_UART_NUM           UART_NUM_2    // Puerto UART a usar
 #define NEXTION_UART_BAUD_RATE     9600          // Velocidad de comunicación
 #define NEXTION_UART_TX_PIN        17            // GPIO para TX (ajustar según tu hardware)
 #define NEXTION_UART_RX_PIN        16            // GPIO para RX (ajustar según tu hardware)
-#define NEXTION_UART_BUFFER_SIZE   512           // Tamaño del buffer
+#define NEXTION_UART_BUFFER_SIZE   1024           // Tamaño del buffer
 
 // Comandos terminadores para Nextion
 #define NEXTION_CMD_END            "\xFF\xFF\xFF"
@@ -41,6 +41,7 @@ bool nextion_send_cmd(const char *cmd);
 // Actualizar valor de un componente
 bool nextion_set_component_value(const char *component, const char *value);
 bool nextion_set_component_value_int(const char *component, int value);
+bool nextion_time_updater_start(const char *username);
 
 // Cambiar a una página específica
 bool nextion_goto_page(const char *page);
@@ -58,5 +59,33 @@ void nextion_start_rx_task(void);
 
 // Para integrarse con el módulo NTP existente
 void nextion_set_ntp_status(bool success);
+
+// Añadir estas declaraciones
+
+/**
+ * @brief Configura la prioridad de actualización de la pantalla
+ * 
+ * @param priority 0=mínima (solo cambios de minuto), 1=media (segundos), 2=máxima (todo)
+ */
+void nextion_set_update_priority(uint8_t priority);
+
+/**
+ * @brief Activa/desactiva el modo de bajo consumo
+ * 
+ * @param enable true para modo bajo consumo, false para normal
+ */
+void nextion_set_low_power_mode(bool enable);
+
+/**
+ * @brief Establece el intervalo de actualización en milisegundos
+ * 
+ * @param interval_ms Tiempo entre actualizaciones (100-60000 ms)
+ */
+void nextion_set_update_interval(uint32_t interval_ms);
+
+/**
+ * @brief Actualiza el nombre de usuario mostrado en la pantalla
+ */
+void nextion_time_updater_set_username(const char *user_name);
 
 #endif // NEXTION_DRIVER_H
