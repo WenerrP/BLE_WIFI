@@ -17,6 +17,7 @@
 #include "esp_mac.h"           // Para ESP_MAC_WIFI_STA
 #include "mqtt_connection.h"   // Incluir su propio encabezado
 #include "mqtt_subscription.h" // Para process_json_command
+#include "certs/ca_cert.h"         // Para certificados de cliente y CA
 
 // Añadir esta declaración al principio:
 // Callback para manejo de información del paciente
@@ -242,57 +243,53 @@ esp_mqtt_client_handle_t mqtt_connect_get_client(void) {
 // Inicialización del cliente MQTT
 void mqtt_connect_init(void) {
     ESP_LOGI(TAG, "Iniciando cliente MQTT");
-    
-    // Si ya existe un cliente, no lo volvemos a crear
+
     if (client != NULL) {
         ESP_LOGW(TAG, "Cliente MQTT ya inicializado, no se iniciará de nuevo");
         return;
     }
-    
+
     // Generar un ID de cliente único
     char *client_id = generate_client_id();
     if (!client_id) {
         ESP_LOGE(TAG, "Error generando ID de cliente");
         return;
     }
-    
+
     ESP_LOGI(TAG, "MQTT Client ID: %s", client_id);
-    
+
     // Crear el mensaje LWT en formato JSON
     cJSON *lwt_json = cJSON_CreateObject();
     cJSON_AddStringToObject(lwt_json, "type", MQTT_MSG_TYPE_STATUS);
     cJSON_AddStringToObject(lwt_json, "status", "offline");
     cJSON_AddStringToObject(lwt_json, "ip", device_ip);
     cJSON_AddNumberToObject(lwt_json, "uptime", esp_timer_get_time() / 1000000);
-    
+
     char *lwt_message = cJSON_Print(lwt_json);
     cJSON_Delete(lwt_json);
-    
+
     if (!lwt_message) {
         ESP_LOGE(TAG, "Error creando mensaje LWT");
         free(client_id);
         return;
     }
 
-    // Configurar el cliente MQTT con LWT
+    // Configurar el cliente MQTT con SSL/TLS
     esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = "mqtt://broker.emqx.io",
-        .broker.address.port = 1883,
-        .session.keepalive = 120,  // Reducir keepalive para detección más rápida
-        .network = {
-            .reconnect_timeout_ms = 10000,
-            .timeout_ms = 10000,
-        },
+        .broker.address.uri = MQTT_BROKER_URI, // URI del broker con mqtts
+        .broker.address.port = MQTT_PORT,     // Puerto SSL
+        .broker.verification.certificate = (const char *)main_certs_ca_crt, // Certificado de CA
+        .session.keepalive = MQTT_KEEPALIVE,
         .credentials.client_id = client_id,
-        .credentials.username = NULL,
+        .credentials.username = MQTT_USER, // Usuario del broker
+        .credentials.authentication.password = MQTT_PASSWORD, // Contraseña del broker
         .session.last_will.topic = MQTT_TOPIC_DEVICE_STATUS,
         .session.last_will.msg = lwt_message,
         .session.last_will.msg_len = strlen(lwt_message),
         .session.last_will.qos = 1,
-        .session.last_will.retain = 1  // Importante: usar retain para que quede disponible
+        .session.last_will.retain = 1, // Importante: usar retain para que quede disponible
     };
-    
-    // Inicializar el cliente MQTT
+
     client = esp_mqtt_client_init(&mqtt_cfg);
     if (client == NULL) {
         ESP_LOGE(TAG, "Error inicializando el cliente MQTT");
@@ -300,13 +297,13 @@ void mqtt_connect_init(void) {
         free(lwt_message);
         return;
     }
-    
+
     // Crear timer para la reconexión automática
     esp_timer_create_args_t timer_args = {
         .callback = mqtt_reconnect_timer_callback,
         .name = "mqtt_reconnect"
     };
-    
+
     esp_err_t ret = esp_timer_create(&timer_args, &reconnect_timer);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Error creando el timer de reconexión: %s", esp_err_to_name(ret));
@@ -316,7 +313,7 @@ void mqtt_connect_init(void) {
         free(lwt_message);
         return;
     }
-    
+
     // Registramos el handler de eventos MQTT
     ret = esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     if (ret != ESP_OK) {
@@ -329,7 +326,7 @@ void mqtt_connect_init(void) {
         free(lwt_message);
         return;
     }
-    
+
     // Iniciamos el cliente
     mqtt_retry_count = 0;
     ret = esp_mqtt_client_start(client);
@@ -340,7 +337,7 @@ void mqtt_connect_init(void) {
         esp_mqtt_client_destroy(client);
         client = NULL;
     }
-    
+
     free(client_id); // Liberamos la memoria del client_id una vez usado
     free(lwt_message); // Liberamos la memoria del mensaje LWT
 }

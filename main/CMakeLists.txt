@@ -26,6 +26,8 @@ idf_component_register(
         driver
         mqtt
         lwip 
+    EMBED_TXTFILES 
+        "certs/ca.crt"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE 

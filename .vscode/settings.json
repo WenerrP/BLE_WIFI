@@ -5,7 +5,7 @@
     "idf.openOcdConfigs": [
         "board/esp32-wrover-kit-3.3v.cfg"
     ],
-    "idf.portWin": "COM14",
+    "idf.portWin": "COM5",
     "idf.toolsPathWin": "c:\\Espressif\\tools",
     "files.associations": {
         "qrcode.h": "c",
@@ -36,7 +36,8 @@
         "freertos.h": "c",
         "chrono": "c",
         "typeinfo": "c",
-        "uart.h": "c"
+        "uart.h": "c",
+        "mqtt_subscription.h": "c"
     },
     "idf.customExtraVars": {
         "IDF_TARGET": "esp32"

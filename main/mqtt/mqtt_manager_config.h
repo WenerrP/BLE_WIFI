@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-#define MQTT_BROKER_URI "mqtts://broker.emqx.io:8883"
+#define MQTT_BROKER_URI "mqtts://broker.emqx.io"
+#define MQTT_PORT 8883
 #define MQTT_KEEPALIVE 120
 #define MQTT_MAX_RETRY_COUNT 5
 #define MQTT_LAST_WILL_TOPIC "/device/status"
@@ -11,8 +12,8 @@
 #define MQTT_LAST_WILL_QOS 1
 #define MQTT_LAST_WILL_RETAIN true
 #define MQTT_RESPONSE_TOPIC "/response"
-#define MQTT_USER "user"
-#define MQTT_PASSWORD "password"
+#define MQTT_USER "Wenerr"
+#define MQTT_PASSWORD "Wenerr14"
 
 extern const uint8_t client_cert_pem_start[] asm("_binary_client_cert_pem_start");
 extern const uint8_t client_cert_pem_end[]   asm("_binary_client_cert_pem_end");

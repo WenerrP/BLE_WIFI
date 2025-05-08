@@ -6,7 +6,7 @@ static TaskHandle_t buzzer_task_handle = NULL;
 
 // Estructura para pasar datos a la tarea del buzzer
 typedef struct {
-    const uint32_t *sequence;
+    uint32_t *sequence;
     size_t length;
 } buzzer_task_params_t;
 
