@@ -5,6 +5,9 @@
 #include <stdbool.h>  // Para el tipo bool
 #include "cJSON.h"
 
+// Base del tópico MQTT
+#define MQTT_BASE_TOPIC "mediwatch/" wifi_provisioning_get_device_name()
+
 // Constantes exportadas para tipos de mensajes MQTT
 #define MQTT_MSG_TYPE_COMMAND        "command"
 #define MQTT_MSG_TYPE_STATUS         "status"
@@ -12,16 +15,25 @@
 #define MQTT_MSG_TYPE_RESPONSE       "response"
 #define MQTT_MSG_TYPE_MED_CONFIRM    "med_confirmation"  // Nuevo tipo para confirmaciones de medicamentos
 
-// Tópicos MQTT estándar
-#define MQTT_TOPIC_DEVICE_COMMANDS   "/device/commands"
-#define MQTT_TOPIC_DEVICE_STATUS     "/device/status" 
-#define MQTT_TOPIC_DEVICE_TELEMETRY  "/device/telemetry"
-#define MQTT_TOPIC_DEVICE_RESPONSE   "/device/response"
-#define MQTT_TOPIC_MED_CONFIRMATION  "/device/med_confirmation"
-#define MQTT_TOPIC_MEDICATION_TAKEN  "/device/medication_taken"
-#define MQTT_TOPIC_PATIENT_INFO      "/device/name"
+// Declaración de las variables globales para los tópicos MQTT
+extern char mqtt_topic_device_commands[];
+extern char mqtt_topic_device_status[];
+extern char mqtt_topic_device_telemetry[];
+extern char mqtt_topic_device_response[];
+extern char mqtt_topic_med_confirmation[];
+extern char mqtt_topic_medication_taken[];
+extern char mqtt_topic_patient_info[];
 
-// Añadir estas definiciones
+// Añadir estas definicionesr
+
+// Definiciones de macros para los tópicos MQTT
+#define MQTT_TOPIC_DEVICE_COMMANDS   mqtt_topic_de0vice_commands
+#define MQTT_TOPIC_DEVICE_STATUS     mqtt_topic_device_status
+#define MQTT_TOPIC_DEVICE_TELEMETRY  mqtt_topic_device_telemetry
+#define MQTT_TOPIC_DEVICE_RESPONSE   mqtt_topic_device_response
+#define MQTT_TOPIC_MED_CONFIRMATION  mqtt_topic_med_confirmation
+#define MQTT_TOPIC_MEDICATION_TAKEN  mqtt_topic_medication_taken
+#define MQTT_TOPIC_PATIENT_INFO      mqtt_topic_patient_info
 
 // Callback para información del paciente
 typedef void (*patient_info_callback_t)(const char *patient_name, const char *patient_id);
@@ -140,5 +152,9 @@ void mqtt_set_patient_info_callback(patient_info_callback_t callback);
  */
 void mqtt_app_handle_patient_info(const char *patient_name, const char *patient_id);
 
+/**
+ * @brief Inicializa los tópicos MQTT
+ */
+void mqtt_app_init_topics(void);
 
 #endif /* MQTT_APP_H */

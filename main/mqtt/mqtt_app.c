@@ -6,6 +6,7 @@
 #include "mqtt_connection.h"
 #include "mqtt_publication.h"
 #include "mqtt_subscription.h"
+#include "wifi_provisioning.h"
 
 static const char *TAG = "MQTT_APP";
 
@@ -15,6 +16,15 @@ static bool mqtt_initialized = false;
 
 // Callback para manejar la información del paciente
 static void (*patient_info_callback)(const char *patient_name, const char *patient_id) = NULL;
+
+// Variables globales para los tópicos MQTT
+char mqtt_topic_device_commands[64];
+char mqtt_topic_device_status[64];
+char mqtt_topic_device_telemetry[64];
+char mqtt_topic_device_response[64];
+char mqtt_topic_med_confirmation[64];
+char mqtt_topic_medication_taken[64];
+char mqtt_topic_patient_info[64];
 
 // Función para registrar el callback
 void mqtt_set_patient_info_callback(patient_info_callback_t callback) {
@@ -135,4 +145,16 @@ void mqtt_app_handle_patient_info(const char *patient_name, const char *patient_
     if (patient_info_callback != NULL) {
         patient_info_callback(patient_name, patient_id);
     }
+}
+
+void mqtt_app_init_topics(void) {
+    const char *device_name = wifi_provisioning_get_device_name();
+
+    snprintf(mqtt_topic_device_commands, sizeof(mqtt_topic_device_commands), "mediwatch/%s/commands", device_name);
+    snprintf(mqtt_topic_device_status, sizeof(mqtt_topic_device_status), "mediwatch/%s/status", device_name);
+    snprintf(mqtt_topic_device_telemetry, sizeof(mqtt_topic_device_telemetry), "mediwatch/%s/telemetry", device_name);
+    snprintf(mqtt_topic_device_response, sizeof(mqtt_topic_device_response), "mediwatch/%s/response", device_name);
+    snprintf(mqtt_topic_med_confirmation, sizeof(mqtt_topic_med_confirmation), "mediwatch/%s/med_confirmation", device_name);
+    snprintf(mqtt_topic_medication_taken, sizeof(mqtt_topic_medication_taken), "mediwatch/%s/taken", device_name);
+    snprintf(mqtt_topic_patient_info, sizeof(mqtt_topic_patient_info), "mediwatch/%s/name", device_name);
 }

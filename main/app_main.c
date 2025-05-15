@@ -26,7 +26,8 @@
 #include "medication/medication_dispenser.h"
 #include "ntp_func.h"
 #include "buzzer_driver.h"
-#include "nextion_driver.h" // Ensure this header includes the declaration for nextion_time_updater_start
+#include "nextion_driver.h"
+#include "mqtt/mqtt_app.h"
 
 #define LED_GPIO_PIN_A 2
 #define LED_GPIO_PIN_B 19
@@ -49,7 +50,6 @@ static bool wifi_connected = false;  // Añadir esta línea
 // Agrega estas variables para manejar la interrupción del botón
 static QueueHandle_t gpio_evt_queue = NULL;
 static bool button_pressed_flag = false;
-static bool gpio_interrupt_enabled = true;
 
 // Añadir después de las variables globales existentes:
 static char global_patient_name[64] = ""; // Valor por defecto
@@ -370,8 +370,8 @@ static void display_update_task(void *pvParameters) {
 }
 
 // Modificación en app_main para configurar el botón correctamente
-void app_main(void)
-{
+
+void app_main(void) {
     // Variables e inicialización
     ESP_LOGI(TAG, "Inicializando aplicación...");
 
@@ -384,7 +384,7 @@ void app_main(void)
     // Reproducir secuencia de inicio
     buzzer_play_pattern(BUZZER_PATTERN_STARTUP);
     
-    // 2. Configurar botón con interrupción
+    // 3. Configurar botón con interrupción
     // Crear una cola para manejar eventos de interrupción
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     
@@ -410,11 +410,14 @@ void app_main(void)
     // Crear tarea para procesar las interrupciones del botón con mayor stack
     xTaskCreate(gpio_button_task, "gpio_button_task", 4096, NULL, 10, NULL);
     
-    // 3. Registrar callbacks para eventos WiFi
+    // 4. Inicializar tópicos MQTT (solo la estructura, no la conexión)
+    mqtt_app_init_topics();
+    
+    // 5. Registrar callbacks para eventos WiFi
     wifi_provisioning_set_callback(wifi_connection_callback);
     wifi_provisioning_set_failure_callback(wifi_failure_callback);
     
-    // 4. Inicializar WiFi provisioning
+    // 6. Inicializar WiFi provisioning
     ESP_LOGI(TAG, "Iniciando provisioning WiFi con callbacks personalizados");
     wifi_event_group = wifi_provisioning_init();
     

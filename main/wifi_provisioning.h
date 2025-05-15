@@ -68,4 +68,11 @@ void wifi_provisioning_set_callback(void (*callback)(char *ip));
  */
 void wifi_provisioning_set_failure_callback(void (*callback)(void));
 
+/**
+ * @brief Obtiene el nombre del dispositivo generado durante la provisión
+ * 
+ * @return const char* Nombre del dispositivo
+ */
+const char* wifi_provisioning_get_device_name(void);
+
 #endif /* WIFI_PROVISIONING_H */

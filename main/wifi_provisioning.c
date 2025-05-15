@@ -41,6 +41,9 @@ static bool provisioned = false;  // Añadir esta línea
 static void (*connected_callback)(char *ip) = NULL;
 static void (*failure_callback)(void) = NULL;
 
+// Declaración de la variable global para almacenar el nombre del dispositivo
+static char device_name[16] = {0}; // Tamaño suficiente para "PROV_XXXXXX"
+
 #if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
 #if CONFIG_EXAMPLE_PROV_SEC2_DEV_MODE
 #define EXAMPLE_PROV_SEC2_USERNAME          "wifiprov"
@@ -243,6 +246,14 @@ void get_device_service_name(char *service_name, size_t max)
     esp_wifi_get_mac(WIFI_IF_STA, eth_mac);
     snprintf(service_name, max, "%s%02X%02X%02X",
              ssid_prefix, eth_mac[3], eth_mac[4], eth_mac[5]);
+
+    // Guardar el nombre del dispositivo en la constante global
+    strncpy(device_name, service_name, sizeof(device_name) - 1);
+    device_name[sizeof(device_name) - 1] = '\0';
+}
+
+const char* wifi_provisioning_get_device_name(void) {
+    return device_name; // Devuelve el nombre del dispositivo
 }
 
 /* Handler for the optional provisioning endpoint registered by the application.
