@@ -27,7 +27,7 @@ extern char mqtt_topic_patient_info[];
 // Añadir estas definicionesr
 
 // Definiciones de macros para los tópicos MQTT
-#define MQTT_TOPIC_DEVICE_COMMANDS   mqtt_topic_de0vice_commands
+#define MQTT_TOPIC_DEVICE_COMMANDS   mqtt_topic_device_commands
 #define MQTT_TOPIC_DEVICE_STATUS     mqtt_topic_device_status
 #define MQTT_TOPIC_DEVICE_TELEMETRY  mqtt_topic_device_telemetry
 #define MQTT_TOPIC_DEVICE_RESPONSE   mqtt_topic_device_response
